@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import {
   Score,
   Measure,
@@ -143,75 +144,40 @@ export class ExportService {
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
 
-    // Query rendered score SVGs from the DOM
-    const svgElements = document.querySelectorAll<SVGSVGElement>('.score-page-svg');
+    // Query rendered score DOM pages (Pianotastic notation containers) or fallback SVGs
+    const pageElements = document.querySelectorAll<HTMLElement>('.score-page');
 
-    if (!svgElements || svgElements.length === 0) {
+    if (!pageElements || pageElements.length === 0) {
       window.print();
       return;
     }
 
-    for (let i = 0; i < svgElements.length; i++) {
+    for (let i = 0; i < pageElements.length; i++) {
       if (i > 0) {
         pdf.addPage(format, orientation);
       }
 
-      const originalSvg = svgElements[i];
-      // Clone SVG so we can manipulate mode-specific elements without affecting live UI
-      const svgEl = originalSvg.cloneNode(true) as SVGSVGElement;
+      const pageEl = pageElements[i];
 
-      // Handle dual export modes
-      if (mode === 'professional') {
-        // In professional mode, remove all learning layer annotations and practice sheet headers
-        const educationalElements = svgEl.querySelectorAll('.pianotastic-learning-layer, .pianotastic-practice-sheet-header');
-        educationalElements.forEach((el) => el.remove());
-      } else {
-        // In practice sheet mode, ensure they are visible
-        const educationalElements = svgEl.querySelectorAll<SVGElement>('.pianotastic-learning-layer, .pianotastic-practice-sheet-header');
-        educationalElements.forEach((el) => {
-          el.style.display = 'block';
-          el.style.visibility = 'visible';
-        });
-      }
-
-      const svgData = new XMLSerializer().serializeToString(svgEl);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const urlObj = window.URL || (window as unknown as { webkitURL: typeof URL }).webkitURL;
-      const blobURL = urlObj.createObjectURL(svgBlob);
-
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas');
-            // High resolution (2.5x) for crisp 300 DPI sheet music print quality
-            const scaleFactor = 2.5;
-            canvas.width = (originalSvg.viewBox?.baseVal?.width || 800) * scaleFactor;
-            canvas.height = (originalSvg.viewBox?.baseVal?.height || 1100) * scaleFactor;
-
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              // Pure white background
-              ctx.fillStyle = '#ffffff';
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-              const imgData = canvas.toDataURL('image/png', 1.0);
-              pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, pageHeight, undefined, 'FAST');
+      try {
+        const canvas = await html2canvas(pageEl, {
+          scale: 2.5, // Crisp 300 DPI equivalent
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          ignoreElements: (element) => {
+            if (mode === 'professional' && element.classList.contains('pianotastic-learning-layer')) {
+              return true;
             }
-            urlObj.revokeObjectURL(blobURL);
-            resolve();
-          } catch (e) {
-            urlObj.revokeObjectURL(blobURL);
-            reject(e);
-          }
-        };
-        img.onerror = (e) => {
-          urlObj.revokeObjectURL(blobURL);
-          reject(e);
-        };
-        img.src = blobURL;
-      });
+            return false;
+          },
+        });
+
+        const imgData = canvas.toDataURL('image/png', 1.0);
+        pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, pageHeight, undefined, 'FAST');
+      } catch (err) {
+        console.error('Failed to render page to canvas for PDF:', err);
+      }
     }
 
     const modeSuffix = mode === 'practice_sheet' ? ' (Pianotastic Practice Sheet)' : ' (Professional Score)';

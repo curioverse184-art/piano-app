@@ -1,6 +1,6 @@
 {
   "name": "Pianotastic Notation Studio",
-  "description": "A professional web-based music notation application for Pianotastic Academy with structured score model, Grand Staff piano notation, playback, and MIDI support.",
+  "description": "A professional web-based music notation application featuring Pianotastic's custom block notation format, 88-key piano keyboard, real-time audio playback, customizable note values, and PDF export.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

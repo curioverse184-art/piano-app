@@ -230,7 +230,104 @@ export const KEY_SIGNATURES: Record<string, KeySignatureInfo> = {
     alteredNotes: { B: 'flat', E: 'flat', A: 'flat' },
     relativeKey: 'E♭ major',
   },
+  'F_minor': {
+    id: 'F_minor',
+    name: 'F minor',
+    mode: 'minor',
+    fifths: -4,
+    sharpsCount: 0,
+    flatsCount: 4,
+    alteredNotes: { B: 'flat', E: 'flat', A: 'flat', D: 'flat' },
+    relativeKey: 'A♭ major',
+  },
+  'Bb_minor': {
+    id: 'Bb_minor',
+    name: 'B♭ minor',
+    mode: 'minor',
+    fifths: -5,
+    sharpsCount: 0,
+    flatsCount: 5,
+    alteredNotes: { B: 'flat', E: 'flat', A: 'flat', D: 'flat', G: 'flat' },
+    relativeKey: 'D♭ major',
+  },
+  'F#_minor': {
+    id: 'F#_minor',
+    name: 'F♯ minor',
+    mode: 'minor',
+    fifths: 3,
+    sharpsCount: 3,
+    flatsCount: 0,
+    alteredNotes: { F: 'sharp', C: 'sharp', G: 'sharp' },
+    relativeKey: 'A major',
+  },
+  'C#_minor': {
+    id: 'C#_minor',
+    name: 'C♯ minor',
+    mode: 'minor',
+    fifths: 4,
+    sharpsCount: 4,
+    flatsCount: 0,
+    alteredNotes: { F: 'sharp', C: 'sharp', G: 'sharp', D: 'sharp' },
+    relativeKey: 'E major',
+  },
+  'G#_minor': {
+    id: 'G#_minor',
+    name: 'G♯ minor',
+    mode: 'minor',
+    fifths: 5,
+    sharpsCount: 5,
+    flatsCount: 0,
+    alteredNotes: { F: 'sharp', C: 'sharp', G: 'sharp', D: 'sharp', A: 'sharp' },
+    relativeKey: 'B major',
+  },
+  'D#_minor': {
+    id: 'D#_minor',
+    name: 'D♯ minor',
+    mode: 'minor',
+    fifths: 6,
+    sharpsCount: 6,
+    flatsCount: 0,
+    alteredNotes: { F: 'sharp', C: 'sharp', G: 'sharp', D: 'sharp', A: 'sharp', E: 'sharp' },
+    relativeKey: 'F♯ major',
+  },
 };
+
+export interface ScaleDefinition {
+  id: string;
+  name: string;
+  mode: 'major' | 'minor';
+  accidentalSummary: string;
+}
+
+export const MAJOR_SCALES: ScaleDefinition[] = [
+  { id: 'C_major', name: 'C Major', mode: 'major', accidentalSummary: 'Natural (No ♯/♭)' },
+  { id: 'G_major', name: 'G Major', mode: 'major', accidentalSummary: '1 Sharp (F♯)' },
+  { id: 'D_major', name: 'D Major', mode: 'major', accidentalSummary: '2 Sharps (F♯, C♯)' },
+  { id: 'A_major', name: 'A Major', mode: 'major', accidentalSummary: '3 Sharps (F♯, C♯, G♯)' },
+  { id: 'E_major', name: 'E Major', mode: 'major', accidentalSummary: '4 Sharps (F♯, C♯, G♯, D♯)' },
+  { id: 'B_major', name: 'B Major', mode: 'major', accidentalSummary: '5 Sharps (F♯, C♯, G♯, D♯, A♯)' },
+  { id: 'F#_major', name: 'F♯ Major', mode: 'major', accidentalSummary: '6 Sharps (F♯, C♯, G♯, D♯, A♯, E♯)' },
+  { id: 'Db_major', name: 'D♭ Major', mode: 'major', accidentalSummary: '5 Flats (B♭, E♭, A♭, D♭, G♭)' },
+  { id: 'Ab_major', name: 'A♭ Major', mode: 'major', accidentalSummary: '4 Flats (B♭, E♭, A♭, D♭)' },
+  { id: 'Eb_major', name: 'E♭ Major', mode: 'major', accidentalSummary: '3 Flats (B♭, E♭, A♭)' },
+  { id: 'Bb_major', name: 'B♭ Major', mode: 'major', accidentalSummary: '2 Flats (B♭, E♭)' },
+  { id: 'F_major', name: 'F Major', mode: 'major', accidentalSummary: '1 Flat (B♭)' },
+];
+
+export const MINOR_SCALES: ScaleDefinition[] = [
+  { id: 'A_minor', name: 'A Minor', mode: 'minor', accidentalSummary: 'Natural (No ♯/♭)' },
+  { id: 'E_minor', name: 'E Minor', mode: 'minor', accidentalSummary: '1 Sharp (F♯)' },
+  { id: 'B_minor', name: 'B Minor', mode: 'minor', accidentalSummary: '2 Sharps (F♯, C♯)' },
+  { id: 'F#_minor', name: 'F♯ Minor', mode: 'minor', accidentalSummary: '3 Sharps (F♯, C♯, G♯)' },
+  { id: 'C#_minor', name: 'C♯ Minor', mode: 'minor', accidentalSummary: '4 Sharps (F♯, C♯, G♯, D♯)' },
+  { id: 'G#_minor', name: 'G♯ Minor', mode: 'minor', accidentalSummary: '5 Sharps (F♯, C♯, G♯, D♯, A♯)' },
+  { id: 'D#_minor', name: 'D♯ Minor', mode: 'minor', accidentalSummary: '6 Sharps (F♯, C♯, G♯, D♯, A♯, E♯)' },
+  { id: 'Bb_minor', name: 'B♭ Minor', mode: 'minor', accidentalSummary: '5 Flats (B♭, E♭, A♭, D♭, G♭)' },
+  { id: 'F_minor', name: 'F Minor', mode: 'minor', accidentalSummary: '4 Flats (B♭, E♭, A♭, D♭)' },
+  { id: 'C_minor', name: 'C Minor', mode: 'minor', accidentalSummary: '3 Flats (B♭, E♭, A♭)' },
+  { id: 'G_minor', name: 'G Minor', mode: 'minor', accidentalSummary: '2 Flats (B♭, E♭)' },
+  { id: 'D_minor', name: 'D Minor', mode: 'minor', accidentalSummary: '1 Flat (B♭)' },
+];
 
 // Base duration values measured in Quarter Note units (quarter = 1.0)
 export const DURATION_VALUES: Record<NoteDuration, number> = {

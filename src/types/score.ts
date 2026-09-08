@@ -28,6 +28,7 @@ export type ToolMode =
   | 'text'
   | 'lyrics'
   | 'chord_symbol'
+  | 'symbol'
   | 'navigation';
 
 export type BarlineType =
@@ -152,6 +153,13 @@ export interface Measure {
   rhEvents: NoteEvent[]; // Right Hand / Treble staff
   lhEvents: NoteEvent[]; // Left Hand / Bass staff
   chordSymbols: ChordSymbolEvent[];
+  // Pianotastic custom notation format fields
+  beatNotes?: Record<number, Pitch[]>; // 0-based beat index -> array of pitches (for Value 1..4)
+  beatValues?: Record<number, number>; // 0-based beat index -> notes per beat (1, 2, 3, or 4)
+  beatLyrics?: Record<string | number, string>; // 0-based beat index OR "b_subBeat" -> lyric syllable / word
+  beatChords?: Record<number, string>; // 0-based beat index -> chord name, e.g. "C", "Am", "G7"
+  beatSymbols?: Record<number, string[]>; // 0-based beat index -> musical symbols, e.g. ["⌣"]
+  sectionName?: string; // Optional section title (e.g. "INTRO", "STHAYI", "VERSE 1", "CHORUS")
   // Repeat & Navigation structural fields
   repeatStart?: boolean; // Repeat Start (||:) at beginning of measure
   repeatEnd?: boolean; // Repeat End (:||) at end of measure
@@ -166,6 +174,8 @@ export interface Measure {
   teacherNote?: string;
   practiceInstruction?: string;
 }
+
+export type HandTemplate = 'Both' | 'RH' | 'LH';
 
 export interface ScoreMetadata {
   title: string;
@@ -182,6 +192,10 @@ export interface ScoreMetadata {
   tempoBeatUnit?: TempoBeatUnit;
   initialTimeSignature: TimeSignature;
   initialKeySignature: string;
+  handTemplate?: HandTemplate;
+  indianTaal?: string;
+  pickupMeasure?: number; // Backwards-compatible
+  pickupBeat?: number; // Starting beat in Measure 1 (1-based, default 1)
 }
 
 export interface LayoutSettings {
@@ -189,6 +203,7 @@ export interface LayoutSettings {
   orientation: Orientation;
   layoutMode: 'auto' | 'manual';
   measuresPerSystemAuto: number;
+  barsPerLine?: number; // Configurable bars per line (e.g. 1, 2, 3, 4, 5, 6, or auto)
   pageMargins: { top: number; right: number; bottom: number; left: number };
   showMeasureNumbers: boolean;
   showAnnotations: boolean;
@@ -211,13 +226,28 @@ export interface Score {
   learningLayer?: LearningLayerSettings;
 }
 
+export interface SavedProject {
+  id: string;
+  name: string;
+  lastModified: string;
+  score: Score;
+  thumbnail?: string;
+  handTemplate: HandTemplate;
+  measuresCount: number;
+  keySignature: string;
+  tempo: number;
+  taal?: string;
+}
+
 export interface SelectionState {
   measureId: string | null;
   staff: 'RH' | 'LH' | null;
   eventId: string | null;
+  beatIndex?: number; // 0-based beat index within measure
+  subBeatIndex?: number; // 0-based note index within beat (for Value 1..4)
   pitchIndex?: number;
   chordSymbolId?: string | null;
-  selectionType?: 'score' | 'measure' | 'note' | 'chord_symbol' | 'lyrics';
+  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'lyrics';
 }
 
 export interface PianotasticProject {

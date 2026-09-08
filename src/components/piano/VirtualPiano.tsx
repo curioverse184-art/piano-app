@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Pitch, NoteStep, AccidentalType } from '../../types/score';
 import { audioEngine } from '../../services/audioEngine';
 import { X, Keyboard, Eye, EyeOff, Music, Volume2 } from 'lucide-react';
@@ -29,11 +29,10 @@ export const VirtualPiano: React.FC<VirtualPianoProps> = ({
   onKeyPress,
 }) => {
   const [activeKeyMidi, setActiveKeyMidi] = useState<number | null>(null);
-  const [keyboardSize, setKeyboardSize] = useState<PianoKeyboardSize>('61');
+  const [keyboardSize, setKeyboardSize] = useState<PianoKeyboardSize>('88');
   const [pianoMode, setPianoMode] = useState<PianoMode>('input');
   const [showNoteNames, setShowNoteNames] = useState(true);
-
-  if (!isOpen) return null;
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Determine starting and ending MIDI note based on keyboard size:
   // 61 keys: C2 (MIDI 36) to C7 (MIDI 96)
@@ -124,6 +123,20 @@ export const VirtualPiano: React.FC<VirtualPianoProps> = ({
   const whiteKeyWidth = keyboardSize === '88' ? 24 : keyboardSize === '76' ? 28 : 34; // in px
   const blackKeyWidth = Math.round(whiteKeyWidth * 0.66);
 
+  // Auto-scroll to center on Middle C (C4) on mount or keyboard resize
+  useEffect(() => {
+    if (isOpen && scrollContainerRef.current) {
+      const middleCIndex = whiteKeys.findIndex((wk) => wk.label === 'C4');
+      if (middleCIndex >= 0) {
+        const containerWidth = scrollContainerRef.current.clientWidth;
+        const targetX = middleCIndex * whiteKeyWidth - containerWidth / 2 + whiteKeyWidth / 2;
+        scrollContainerRef.current.scrollTo({ left: Math.max(0, targetX), behavior: 'smooth' });
+      }
+    }
+  }, [isOpen, keyboardSize, whiteKeyWidth, whiteKeys]);
+
+  if (!isOpen) return null;
+
   return (
     <div
       id="virtual-piano-panel"
@@ -208,7 +221,10 @@ export const VirtualPiano: React.FC<VirtualPianoProps> = ({
       </div>
 
       {/* Keyboard Area with Horizontal Scrolling */}
-      <div className="w-full overflow-x-auto bg-stone-950 py-3 px-4 flex justify-center custom-scrollbar">
+      <div
+        ref={scrollContainerRef}
+        className="w-full overflow-x-auto bg-stone-950 py-3 px-4 flex justify-center custom-scrollbar"
+      >
         <div
           className="relative flex h-32 select-none"
           style={{ width: `${whiteKeys.length * whiteKeyWidth}px` }}

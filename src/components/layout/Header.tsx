@@ -21,6 +21,8 @@ import {
   RotateCcw,
   Piano,
   Clock,
+  Home,
+  Plus,
 } from 'lucide-react';
 import { ExportService } from '../../services/exportService';
 
@@ -42,6 +44,8 @@ interface HeaderProps {
   onResetLayout?: () => void;
   onToggleVirtualPiano?: () => void;
   isVirtualPianoOpen?: boolean;
+  onNavigateHome?: () => void;
+  onOpenNewPageModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -62,6 +66,8 @@ export const Header: React.FC<HeaderProps> = ({
   onResetLayout,
   onToggleVirtualPiano,
   isVirtualPianoOpen,
+  onNavigateHome,
+  onOpenNewPageModal,
 }) => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -134,18 +140,49 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Brand & Document Menu */}
       <div className="flex items-center space-x-4">
         {/* Pianotastic Academy Logo & Title */}
-        <div className="flex items-center space-x-2.5 pr-3 border-r border-stone-200">
-          <div className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center font-bold shadow-xs">
+        <div
+          onClick={onNavigateHome}
+          className="flex items-center space-x-2.5 pr-3 border-r border-stone-200 cursor-pointer group"
+          title="Return to Projects Home Screen"
+        >
+          <div className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center font-bold shadow-xs group-hover:bg-amber-800 transition-colors">
             <Music2 className="w-4 h-4 text-amber-300" />
           </div>
           <div>
             <span className="text-xs font-semibold uppercase tracking-wider text-amber-900 block -mb-0.5 font-sans">
               Pianotastic Academy
             </span>
-            <span className="text-sm font-bold tracking-tight text-stone-900 font-serif">
+            <span className="text-sm font-bold tracking-tight text-stone-900 font-serif group-hover:text-amber-900 transition-colors">
               Notation Studio
             </span>
           </div>
+        </div>
+
+        {/* Home & New Page Buttons */}
+        <div className="flex items-center space-x-1.5 mr-2">
+          {onNavigateHome && (
+            <button
+              id="header-home-btn"
+              onClick={onNavigateHome}
+              title="Return to Projects Home Screen"
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors"
+            >
+              <Home className="w-3.5 h-3.5 text-stone-600" />
+              <span>Projects</span>
+            </button>
+          )}
+
+          {onOpenNewPageModal && (
+            <button
+              id="header-new-page-btn"
+              onClick={onOpenNewPageModal}
+              title="Create New Page with Template Setup"
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-2xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Page</span>
+            </button>
+          )}
         </div>
 
         {/* Application Menus */}
@@ -167,7 +204,38 @@ export const Header: React.FC<HeaderProps> = ({
                 onMouseLeave={() => setActiveMenu(null)}
               >
                 <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  New Project
+                  New & Home
+                </div>
+                {onOpenNewPageModal && (
+                  <button
+                    onClick={() => {
+                      onOpenNewPageModal();
+                      setActiveMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left hover:bg-amber-50 text-amber-900 font-semibold flex items-center justify-between"
+                  >
+                    <span className="flex items-center space-x-1.5">
+                      <Plus className="w-3.5 h-3.5 text-amber-600" />
+                      <span>New Page (Templates)...</span>
+                    </span>
+                    <span className="text-[10px] text-amber-700">Setup</span>
+                  </button>
+                )}
+                {onNavigateHome && (
+                  <button
+                    onClick={() => {
+                      onNavigateHome();
+                      setActiveMenu(null);
+                    }}
+                    className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-1.5 text-stone-700"
+                  >
+                    <Home className="w-3.5 h-3.5 text-stone-500" />
+                    <span>Projects Home</span>
+                  </button>
+                )}
+                <div className="my-1 border-t border-stone-100" />
+                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
+                  Presets & Samples
                 </div>
                 <button
                   onClick={() => {

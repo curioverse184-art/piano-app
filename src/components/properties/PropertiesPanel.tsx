@@ -1037,6 +1037,32 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
             </span>
           </div>
 
+          {/* Bars Per Line Control */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-semibold text-stone-700">Bars Per Line</label>
+              <span className="text-[10px] text-stone-500 font-mono">
+                {score.layoutSettings.barsPerLine || 4} bars/line
+              </span>
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {[1, 2, 3, 4, 5, 6].map((num) => (
+                <button
+                  key={num}
+                  type="button"
+                  onClick={() => onUpdateLayout({ barsPerLine: num })}
+                  className={`py-1 rounded border text-xs font-semibold ${
+                    (score.layoutSettings.barsPerLine || 4) === num
+                      ? 'bg-stone-900 text-white border-stone-900'
+                      : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
+                  }`}
+                >
+                  {num}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Orientation: Portrait / Landscape */}
           <div className="grid grid-cols-2 gap-1.5">
             <button

@@ -16,10 +16,10 @@ import {
 interface MainToolbarProps {
   toolMode: ToolMode;
   onSetToolMode: (mode: ToolMode) => void;
-  selectedDuration: NoteDuration;
-  onSetDuration: (dur: NoteDuration) => void;
-  isDotted: boolean;
-  onToggleDotted: () => void;
+  selectedDuration?: NoteDuration;
+  onSetDuration?: (dur: NoteDuration) => void;
+  isDotted?: boolean;
+  onToggleDotted?: () => void;
   selectedAccidental: AccidentalType | null;
   onSetAccidental: (acc: AccidentalType | null) => void;
   activeHand: Hand;
@@ -29,10 +29,6 @@ interface MainToolbarProps {
 export const MainToolbar: React.FC<MainToolbarProps> = ({
   toolMode,
   onSetToolMode,
-  selectedDuration,
-  onSetDuration,
-  isDotted,
-  onToggleDotted,
   selectedAccidental,
   onSetAccidental,
   activeHand,
@@ -48,15 +44,6 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
     { id: 'lyrics', label: 'Lyrics', icon: <Type className="w-3.5 h-3.5" />, shortcut: 'L' },
     { id: 'chord_symbol', label: 'Chord Symbol', icon: <Sparkles className="w-3.5 h-3.5" />, shortcut: 'C' },
     { id: 'navigation', label: 'Navigation', icon: <Repeat className="w-3.5 h-3.5" />, shortcut: 'G' },
-  ];
-
-  const durations: { id: NoteDuration; label: string; symbol: string; num: string }[] = [
-    { id: 'whole', label: 'Whole Note', symbol: '𝅝', num: '1' },
-    { id: 'half', label: 'Half Note', symbol: '𝅗𝅥', num: '2' },
-    { id: 'quarter', label: 'Quarter Note', symbol: '𝅘𝅥', num: '3' },
-    { id: 'eighth', label: 'Eighth Note', symbol: '𝅘𝅥𝅮', num: '4' },
-    { id: 'sixteenth', label: '16th Note', symbol: '𝅘𝅥𝅯', num: '5' },
-    { id: 'thirty_second', label: '32nd Note', symbol: '𝅘𝅥𝅰', num: '6' },
   ];
 
   const accidentals: { id: AccidentalType | null; label: string; glyph: string }[] = [
@@ -91,40 +78,6 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
             <span className="font-medium">{t.label}</span>
           </button>
         ))}
-      </div>
-
-      {/* Note Duration Selector */}
-      <div className="flex items-center space-x-1 bg-white p-1 rounded-lg border border-stone-200 shadow-2xs">
-        <span className="text-[10px] uppercase font-bold text-stone-600 px-1.5">Value</span>
-        {durations.map((d) => (
-          <button
-            key={d.id}
-            id={`duration-${d.id}`}
-            onClick={() => onSetDuration(d.id)}
-            title={`${d.label} (Press ${d.num})`}
-            className={`w-8 h-7 flex items-center justify-center rounded-md text-base leading-none transition-colors ${
-              selectedDuration === d.id
-                ? 'bg-amber-100 text-amber-900 font-bold border border-amber-300'
-                : 'text-stone-800 hover:bg-stone-100'
-            }`}
-          >
-            <span>{d.symbol}</span>
-          </button>
-        ))}
-
-        {/* Dot Toggle */}
-        <button
-          id="dot-toggle-btn"
-          onClick={onToggleDotted}
-          title="Dotted Note (Press .)"
-          className={`px-2 h-7 flex items-center justify-center rounded-md text-sm font-bold transition-colors ${
-            isDotted
-              ? 'bg-amber-100 text-amber-900 border border-amber-300'
-              : 'text-stone-700 hover:bg-stone-100'
-          }`}
-        >
-          • Dot
-        </button>
       </div>
 
       {/* Accidentals Toolbar */}
