@@ -10,6 +10,7 @@ import {
   Clipboard,
   Maximize2,
   Repeat,
+  CornerDownLeft,
 } from 'lucide-react';
 
 interface MeasureContextMenuProps {
@@ -24,6 +25,7 @@ interface MeasureContextMenuProps {
   onClear: (measureId: string) => void;
   onResetWidth: (measureId: string) => void;
   onOpenNavigation?: (measure: Measure) => void;
+  onToggleLineBreak?: (measureId: string) => void;
 }
 
 export const MeasureContextMenu: React.FC<MeasureContextMenuProps> = ({
@@ -38,6 +40,7 @@ export const MeasureContextMenu: React.FC<MeasureContextMenuProps> = ({
   onClear,
   onResetWidth,
   onOpenNavigation,
+  onToggleLineBreak,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -108,6 +111,21 @@ export const MeasureContextMenu: React.FC<MeasureContextMenuProps> = ({
       >
         <Repeat className="w-3.5 h-3.5 text-amber-600" />
         <span className="font-medium">Repeat & Navigation...</span>
+      </button>
+
+      {/* Manual Line Break */}
+      <button
+        onClick={() => {
+          onToggleLineBreak?.(measure.id);
+          onClose();
+        }}
+        className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between text-stone-800"
+      >
+        <span className="flex items-center space-x-2">
+          <CornerDownLeft className="w-3.5 h-3.5 text-stone-500" />
+          <span>{measure.systemBreak ? 'Remove Line Break' : 'Line Break After Bar'}</span>
+        </span>
+        <span className="text-[10px] text-stone-400 font-mono">↵</span>
       </button>
 
       <div className="my-1 border-t border-stone-100" />

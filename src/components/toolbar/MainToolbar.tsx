@@ -8,9 +8,9 @@ import {
   Link,
   Layers,
   Type,
-  AlignLeft,
-  Sparkles,
   Repeat,
+  Sliders,
+  Sparkles,
 } from 'lucide-react';
 
 interface MainToolbarProps {
@@ -24,6 +24,11 @@ interface MainToolbarProps {
   onSetAccidental: (acc: AccidentalType | null) => void;
   activeHand: Hand;
   onSetHand: (hand: Hand) => void;
+  currentBeatValue?: number;
+  onChangeBeatValue?: (val: number) => void;
+  activePositionText?: string;
+  isInspectorOpen?: boolean;
+  onToggleInspector?: () => void;
 }
 
 export const MainToolbar: React.FC<MainToolbarProps> = ({
@@ -33,6 +38,11 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
   onSetAccidental,
   activeHand,
   onSetHand,
+  currentBeatValue = 1,
+  onChangeBeatValue,
+  activePositionText = 'Bar 1 • Beat 1 • 1 note/beat',
+  isInspectorOpen = true,
+  onToggleInspector,
 }) => {
   const tools: { id: ToolMode; label: string; icon: React.ReactNode; shortcut: string }[] = [
     { id: 'select', label: 'Select', icon: <MousePointer className="w-3.5 h-3.5" />, shortcut: 'V' },
@@ -42,7 +52,12 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
     { id: 'tie', label: 'Tie', icon: <Link className="w-3.5 h-3.5" />, shortcut: 'T' },
     { id: 'chord', label: 'Chord', icon: <Layers className="w-3.5 h-3.5" />, shortcut: 'K' },
     { id: 'lyrics', label: 'Lyrics', icon: <Type className="w-3.5 h-3.5" />, shortcut: 'L' },
-    { id: 'chord_symbol', label: 'Chord Symbol', icon: <Sparkles className="w-3.5 h-3.5" />, shortcut: 'C' },
+    {
+      id: 'symbol',
+      label: 'Symbol ⌣',
+      icon: <span className="font-bold text-xs leading-none">⌣</span>,
+      shortcut: 'S',
+    },
     { id: 'navigation', label: 'Navigation', icon: <Repeat className="w-3.5 h-3.5" />, shortcut: 'G' },
   ];
 
@@ -58,65 +73,116 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
   return (
     <div
       id="main-toolbar"
-      className="w-full bg-stone-50 border-b border-stone-200/80 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs z-20 select-none print:hidden"
+      className="w-full bg-stone-50 border-b border-stone-200 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs z-20 select-none print:hidden shadow-2xs"
     >
-      {/* Tool Palette Selector */}
-      <div className="flex items-center space-x-1 bg-white p-1 rounded-lg border border-stone-200 shadow-2xs">
+      {/* Left: Primary Editing Tools */}
+      <div className="flex items-center space-x-1 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
         {tools.map((t) => (
           <button
             key={t.id}
             id={`tool-${t.id}`}
             onClick={() => onSetToolMode(t.id)}
             title={`${t.label} (${t.shortcut})`}
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md transition-colors ${
+            className={`flex items-center space-x-1 px-2 py-1 rounded-md transition-colors ${
               toolMode === t.id
                 ? 'bg-stone-900 text-white shadow-xs font-semibold'
                 : 'text-stone-700 hover:bg-stone-100'
             }`}
           >
             {t.icon}
-            <span className="font-medium">{t.label}</span>
+            <span className="font-medium text-[11px]">{t.label}</span>
           </button>
         ))}
       </div>
 
-      {/* Accidentals Toolbar */}
-      <div className="flex items-center space-x-1 bg-white p-1 rounded-lg border border-stone-200 shadow-2xs">
-        <span className="text-[10px] uppercase font-bold text-stone-600 px-1.5">Accidental</span>
-        {accidentals.map((acc) => (
-          <button
-            key={acc.id || 'none'}
-            id={`accidental-${acc.id || 'none'}`}
-            onClick={() => onSetAccidental(acc.id)}
-            title={acc.label}
-            className={`w-7 h-7 flex items-center justify-center rounded-md font-serif text-sm transition-colors ${
-              selectedAccidental === acc.id
-                ? 'bg-stone-900 text-white font-bold'
-                : 'text-stone-800 hover:bg-stone-100'
-            }`}
-          >
-            {acc.glyph}
-          </button>
-        ))}
+      {/* Middle-Left: Compact Note Value Selector (1, 2, 3, 4) */}
+      {onChangeBeatValue && (
+        <div className="flex items-center space-x-1 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
+          <span className="text-[10px] uppercase font-bold text-stone-500 px-1.5">Value</span>
+          {[1, 2, 3, 4].map((val) => (
+            <button
+              key={val}
+              id={`value-selector-${val}`}
+              onClick={() => onChangeBeatValue(val)}
+              title={`${val} note${val > 1 ? 's' : ''} per beat`}
+              className={`w-6 h-6 flex items-center justify-center rounded-md font-bold text-xs transition-colors ${
+                currentBeatValue === val
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'text-stone-700 hover:bg-stone-100'
+              }`}
+            >
+              {val}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Middle: Compact Active Position Indicator */}
+      <div
+        id="active-position-indicator"
+        className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-stone-100/90 border border-stone-200 text-stone-700 font-medium text-[11px]"
+        title="Active position in the score"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+        <span>{activePositionText}</span>
       </div>
 
-      {/* Hand Input Selector (RH / LH / Both for Piano Teachers) */}
-      <div className="flex items-center space-x-1 bg-white p-1 rounded-lg border border-stone-200 shadow-2xs">
-        <span className="text-[10px] uppercase font-bold text-stone-600 px-1.5">Hand</span>
-        {(['RH', 'LH', 'Both'] as Hand[]).map((hand) => (
+      {/* Right Side: Accidentals, Hand Selector & Inspector Toggle */}
+      <div className="flex items-center space-x-2">
+        {/* Compact Accidentals */}
+        <div className="flex items-center space-x-0.5 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
+          {accidentals.map((acc) => (
+            <button
+              key={acc.id || 'none'}
+              id={`accidental-${acc.id || 'none'}`}
+              onClick={() => onSetAccidental(acc.id)}
+              title={acc.label}
+              className={`w-6 h-6 flex items-center justify-center rounded-md font-serif text-sm transition-colors ${
+                selectedAccidental === acc.id
+                  ? 'bg-stone-900 text-white font-bold'
+                  : 'text-stone-800 hover:bg-stone-100'
+              }`}
+            >
+              {acc.glyph}
+            </button>
+          ))}
+        </div>
+
+        {/* Compact Hand Selector */}
+        <div className="flex items-center space-x-0.5 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
+          {(['RH', 'LH', 'Both'] as Hand[]).map((hand) => (
+            <button
+              key={hand}
+              id={`hand-mode-${hand.toLowerCase()}`}
+              onClick={() => onSetHand(hand)}
+              title={hand === 'RH' ? 'Right Hand (Treble)' : hand === 'LH' ? 'Left Hand (Bass)' : 'Both Hands'}
+              className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+                activeHand === hand
+                  ? 'bg-stone-900 text-white'
+                  : 'text-stone-700 hover:bg-stone-100'
+              }`}
+            >
+              {hand}
+            </button>
+          ))}
+        </div>
+
+        {/* Inspector Panel Toggle Button */}
+        {onToggleInspector && (
           <button
-            key={hand}
-            id={`hand-mode-${hand.toLowerCase()}`}
-            onClick={() => onSetHand(hand)}
-            className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors ${
-              activeHand === hand
-                ? 'bg-stone-900 text-white'
-                : 'text-stone-700 hover:bg-stone-100'
+            id="toggle-inspector-btn"
+            onClick={onToggleInspector}
+            title={isInspectorOpen ? 'Collapse Inspector (Expand Score View)' : 'Open Inspector & Tool Settings'}
+            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-colors shadow-2xs ${
+              isInspectorOpen
+                ? 'bg-stone-900 text-white border-stone-900'
+                : 'bg-white border-stone-300 text-stone-700 hover:bg-stone-100'
             }`}
           >
-            {hand === 'RH' ? 'Right (Treble)' : hand === 'LH' ? 'Left (Bass)' : 'Both'}
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Inspector</span>
           </button>
-        ))}
+        )}
       </div>
     </div>
   );

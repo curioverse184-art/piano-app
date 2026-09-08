@@ -1,50 +1,67 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Score,
   Measure,
   SelectionState,
   NoteEvent,
-  NoteDuration,
+  Hand,
+  Pitch,
   AccidentalType,
   TimeSignature,
   NavigationJump,
   NavigationTarget,
   VoltaEnding,
-  TempoBeatUnit,
-  ArticulationType,
-  LearningLayerSettings,
-  DEFAULT_LEARNING_LAYER,
 } from '../../types/score';
-import { KEY_SIGNATURES, validateMeasureEvents, formatPitchName } from '../../utils/musicTheory';
-import { calculatePlaybackRoute } from '../../utils/navigationEngine';
+import { KEY_SIGNATURES } from '../../utils/musicTheory';
 import {
-  Settings,
+  getEffectiveBeatValue,
+  getMeasureTotalBeats,
+  isBeatLockedByPickup,
+  formatNoteLetter,
+} from '../../utils/pianotasticNotation';
+import {
+  Sliders,
   Music,
-  PlusCircle,
+  Layers,
+  Type,
+  Repeat,
+  Settings,
+  X,
+  Plus,
   Trash2,
   Copy,
-  RotateCcw,
-  Sliders,
-  Type,
   ChevronRight,
+  ChevronLeft,
   Sparkles,
+  Check,
+  RotateCcw,
   Maximize2,
-  Repeat,
-  CheckCircle2,
-  AlertCircle,
-  Flag,
-  GraduationCap,
-  BookOpen,
+  Hash,
+  ArrowUp,
+  ArrowDown,
+  Lock,
+  CornerDownLeft,
 } from 'lucide-react';
 
 interface PropertiesPanelProps {
+  isOpen?: boolean;
+  onClose?: () => void;
   score: Score;
   selection: SelectionState;
+  activeHand?: Hand;
+  currentBeatValue?: number;
+  onChangeBeatValue?: (val: number) => void;
+  onUpdateBeatChord?: (measureId: string, beatIndex: number, chord: string) => void;
+  onUpdateBeatLyric?: (measureId: string, beatIndex: number, text: string, subBeatIndex?: number) => void;
+  onToggleBeatSymbol?: (measureId: string, beatIndex: number, symbol: string) => void;
+  onClearCurrentBeat?: () => void;
+  onTransposeSelected?: (semitones: number) => void;
+  onSelectBeat?: (measureId: string, beatIndex: number, subBeatIndex?: number) => void;
   onUpdateScoreMetadata: (patch: Partial<Score['metadata']>) => void;
   onUpdateLayout: (patch: Partial<Score['layoutSettings']>) => void;
-  onUpdateLearningLayer?: (patch: Partial<LearningLayerSettings>) => void;
   onUpdateMeasure: (measureId: string, patch: Partial<Measure>) => void;
-  onUpdateEvent: (
+  onToggleLineBreak?: (measureId?: string) => void;
+  onUpdateEvent?: (
     measureId: string,
     staff: 'RH' | 'LH',
     eventId: string,
@@ -62,13 +79,23 @@ interface PropertiesPanelProps {
 }
 
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
+  isOpen = true,
+  onClose,
   score,
   selection,
+  activeHand = 'RH',
+  currentBeatValue = 1,
+  onChangeBeatValue,
+  onUpdateBeatChord,
+  onUpdateBeatLyric,
+  onToggleBeatSymbol,
+  onClearCurrentBeat,
+  onTransposeSelected,
+  onSelectBeat,
   onUpdateScoreMetadata,
   onUpdateLayout,
-  onUpdateLearningLayer,
   onUpdateMeasure,
-  onUpdateEvent,
+  onToggleLineBreak,
   onAddMeasure,
   onInsertMeasureBefore,
   onInsertMeasureAfter,
@@ -79,1177 +106,1010 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onOpenChordDialog,
   onResetLayout,
 }) => {
-  const selectedMeasure = score.measures.find((m) => m.id === selection.measureId);
+  if (!isOpen) return null;
 
-  // Find selected event if any
-  let selectedEvent: NoteEvent | null = null;
-  if (selectedMeasure && selection.staff && selection.eventId) {
-    const list = selection.staff === 'RH' ? selectedMeasure.rhEvents : selectedMeasure.lhEvents;
-    selectedEvent = list.find((e) => e.id === selection.eventId) || null;
-  }
+  // Derive active measure and beat information
+  const selectedMeasureId = selection.measureId || score.measures[0]?.id;
+  const measureIdx = Math.max(0, score.measures.findIndex((m) => m.id === selectedMeasureId));
+  const activeMeasure = score.measures[measureIdx] || score.measures[0];
+  const beatIndex = selection.beatIndex !== undefined ? selection.beatIndex : 0;
+  const subBeatIndex = selection.subBeatIndex || 0;
 
-  const ts = selectedMeasure?.timeSignature || score.metadata.initialTimeSignature;
-  const rhValidation = selectedMeasure ? validateMeasureEvents(selectedMeasure.rhEvents, ts) : null;
-  const lhValidation = selectedMeasure ? validateMeasureEvents(selectedMeasure.lhEvents, ts) : null;
+  const totalBeats = activeMeasure
+    ? getMeasureTotalBeats(activeMeasure, score.metadata.initialTimeSignature)
+    : 4;
+
+  const effectiveVal = activeMeasure
+    ? getEffectiveBeatValue(score, measureIdx, beatIndex)
+    : currentBeatValue;
+
+  const activeBeatNotes: Pitch[] = activeMeasure?.beatNotes?.[beatIndex] || [];
+  const activeBeatChord = activeMeasure?.beatChords?.[beatIndex] || '';
+  const activeBeatLyric =
+    activeMeasure?.beatLyrics?.[`${beatIndex}_${subBeatIndex}`] ||
+    activeMeasure?.beatLyrics?.[beatIndex] ||
+    '';
+  const activeBeatSymbols: string[] = activeMeasure?.beatSymbols?.[beatIndex] || [];
+
+  // Determine which sub-tab to display:
+  // Can be automatic based on selection.selectionType, or user can toggle tabs
+  type InspectorTab = 'active' | 'measure' | 'score';
+  const [activeTab, setActiveTab] = useState<InspectorTab>('active');
+
+  // Input states for chord and lyric
+  const [chordInput, setChordInput] = useState(activeBeatChord);
+  const [lyricInput, setLyricInput] = useState(activeBeatLyric);
+
+  // Sync inputs when beat or selection changes
+  useEffect(() => {
+    setChordInput(activeBeatChord);
+  }, [activeBeatChord, beatIndex, selectedMeasureId]);
+
+  useEffect(() => {
+    setLyricInput(activeBeatLyric);
+  }, [activeBeatLyric, beatIndex, subBeatIndex, selectedMeasureId]);
+
+  const quickChords = ['C', 'Am', 'F', 'G7', 'Dm', 'Cmaj7', 'Em', 'A7', 'G', 'D', 'E', 'Bb', 'F#m', 'B7'];
+
+  // Indian Taals
+  const indianTaals = [
+    { id: 'None', label: 'None (Western Standard)' },
+    { id: 'Teental', label: 'Teental (16 Beats • 4+4+4+4)' },
+    { id: 'Keherwa', label: 'Keherwa (8 Beats • 4+4)' },
+    { id: 'Dadra', label: 'Dadra (6 Beats • 3+3)' },
+    { id: 'Rupak', label: 'Rupak (7 Beats • 3+2+2)' },
+    { id: 'Ektaal', label: 'Ektaal (12 Beats • 2+2+2+2+2+2)' },
+    { id: 'Jhaptaal', label: 'Jhaptaal (10 Beats • 2+3+2+3)' },
+  ];
 
   return (
     <aside
       id="properties-panel"
-      className="w-72 bg-white border-l border-stone-200/90 flex flex-col h-full overflow-y-auto text-xs text-stone-800 z-10 select-none print:hidden shadow-xs"
+      className="w-80 bg-white border-l border-stone-200/90 flex flex-col h-full overflow-hidden text-xs text-stone-800 z-10 select-none print:hidden shadow-xs shrink-0"
     >
-      {/* Panel Header */}
-      <div className="p-3.5 border-b border-stone-200 flex items-center justify-between bg-stone-50/70">
+      {/* Header: Title, Context info & Close button */}
+      <div className="p-3 border-b border-stone-200 flex items-center justify-between bg-stone-50/80">
         <div className="flex items-center space-x-2">
-          <Sliders className="w-4 h-4 text-stone-700" />
-          <span className="font-serif font-bold text-sm text-stone-900">Score & Inspector</span>
+          <div className="w-6 h-6 rounded-md bg-stone-900 text-white flex items-center justify-center font-bold">
+            <Sliders className="w-3.5 h-3.5" />
+          </div>
+          <div>
+            <h2 className="font-bold text-stone-900 text-sm leading-tight">Inspector</h2>
+            <p className="text-[10px] text-stone-500 font-medium">
+              Bar {activeMeasure ? activeMeasure.measureNumber : 1} • Beat {beatIndex + 1}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-1">
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Close Inspector (Full Score View)"
+              className="p-1 rounded-md text-stone-500 hover:text-stone-900 hover:bg-stone-200 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="p-3.5 space-y-4">
-        {/* SECTION 1: Key Signature Tool (Full 15 Major & Minor Keys) */}
-        <div className="space-y-1.5 bg-stone-50/60 p-2.5 rounded-lg border border-stone-200/70">
-          <div className="flex items-center justify-between">
-            <label className="font-bold text-stone-800">Key Signature</label>
-            <span className="text-[10px] text-stone-500 font-mono">
-              {KEY_SIGNATURES[score.metadata.initialKeySignature]?.fifths !== 0
-                ? `${Math.abs(KEY_SIGNATURES[score.metadata.initialKeySignature]?.fifths)} ${KEY_SIGNATURES[score.metadata.initialKeySignature]?.fifths > 0 ? 'sharps' : 'flats'}`
-                : 'Natural'}
-            </span>
-          </div>
-          <select
-            id="key-signature-select"
-            value={score.metadata.initialKeySignature}
-            onChange={(e) => onUpdateScoreMetadata({ initialKeySignature: e.target.value })}
-            className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded-md font-medium text-xs text-stone-900 focus:ring-2 focus:ring-amber-500"
-          >
-            <optgroup label="Major Keys">
-              <option value="C_major">C major (0 sharps/flats)</option>
-              <option value="G_major">G major (1 sharp: F♯)</option>
-              <option value="D_major">D major (2 sharps: F♯, C♯)</option>
-              <option value="A_major">A major (3 sharps: F♯, C♯, G♯)</option>
-              <option value="E_major">E major (4 sharps: F♯, C♯, G♯, D♯)</option>
-              <option value="B_major">B major (5 sharps: F♯, C♯, G♯, D♯, A♯)</option>
-              <option value="F#_major">F♯ major (6 sharps)</option>
-              <option value="C#_major">C♯ major (7 sharps)</option>
-              <option value="F_major">F major (1 flat: B♭)</option>
-              <option value="Bb_major">B♭ major (2 flats: B♭, E♭)</option>
-              <option value="Eb_major">E♭ major (3 flats: B♭, E♭, A♭)</option>
-              <option value="Ab_major">A♭ major (4 flats: B♭, E♭, A♭, D♭)</option>
-              <option value="Db_major">D♭ major (5 flats: B♭, E♭, A♭, D♭, G♭)</option>
-              <option value="Gb_major">G♭ major (6 flats)</option>
-              <option value="Cb_major">C♭ major (7 flats)</option>
-            </optgroup>
-            <optgroup label="Relative Minor Keys">
-              <option value="A_minor">A minor (relative to C)</option>
-              <option value="E_minor">E minor (1 sharp)</option>
-              <option value="B_minor">B minor (2 sharps)</option>
-              <option value="D_minor">D minor (1 flat)</option>
-              <option value="G_minor">G minor (2 flats)</option>
-              <option value="C_minor">C minor (3 flats)</option>
-            </optgroup>
-          </select>
-        </div>
+      {/* Segmented View Tabs */}
+      <div className="flex border-b border-stone-200 bg-stone-100/60 p-1 gap-1">
+        <button
+          onClick={() => setActiveTab('active')}
+          className={`flex-1 py-1 px-2 rounded-md font-semibold text-[11px] transition-colors flex items-center justify-center space-x-1 ${
+            activeTab === 'active'
+              ? 'bg-white text-stone-900 shadow-2xs'
+              : 'text-stone-600 hover:text-stone-900'
+          }`}
+        >
+          <Music className="w-3 h-3" />
+          <span>Beat & Tool</span>
+        </button>
 
-        {/* SECTION 2: Time Signature & Custom Meter */}
-        <div className="space-y-1.5 bg-stone-50/60 p-2.5 rounded-lg border border-stone-200/70">
-          <div className="flex items-center justify-between">
-            <label className="font-bold text-stone-800">Time Signature</label>
-            <button
-              onClick={onOpenCustomTimeSignature}
-              className="text-[11px] text-amber-800 font-semibold hover:underline"
-            >
-              Custom...
-            </button>
-          </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={onOpenCustomTimeSignature}
-              className="flex-1 py-1.5 px-3 bg-white border border-stone-300 rounded-md text-center font-bold text-sm text-stone-900 hover:bg-stone-100 flex items-center justify-between"
-            >
-              <span>Current:</span>
-              <span className="font-serif text-base">
-                {score.metadata.initialTimeSignature.numerator}/
-                {score.metadata.initialTimeSignature.denominator}
-              </span>
-            </button>
-          </div>
-        </div>
+        <button
+          onClick={() => setActiveTab('measure')}
+          className={`flex-1 py-1 px-2 rounded-md font-semibold text-[11px] transition-colors flex items-center justify-center space-x-1 ${
+            activeTab === 'measure'
+              ? 'bg-white text-stone-900 shadow-2xs'
+              : 'text-stone-600 hover:text-stone-900'
+          }`}
+        >
+          <Repeat className="w-3 h-3" />
+          <span>Measure</span>
+        </button>
 
-        {/* SECTION 3: Selected Event Inspector (Note, Rest, Lyrics, Fingering) */}
-        {selectedEvent && selectedMeasure && selection.staff && (
-          <div className="space-y-3 bg-amber-50/40 p-3 rounded-lg border border-amber-200/80">
-            <div className="flex items-center justify-between border-b border-amber-200/60 pb-1.5">
-              <span className="font-bold text-amber-950 uppercase text-[10px] tracking-wider">
-                Selected {selectedEvent.type === 'note' ? 'Note' : 'Rest'}
-              </span>
-              <span className="text-[10px] font-mono text-amber-900">
-                Staff: {selection.staff}
-              </span>
-            </div>
+        <button
+          onClick={() => setActiveTab('score')}
+          className={`flex-1 py-1 px-2 rounded-md font-semibold text-[11px] transition-colors flex items-center justify-center space-x-1 ${
+            activeTab === 'score'
+              ? 'bg-white text-stone-900 shadow-2xs'
+              : 'text-stone-600 hover:text-stone-900'
+          }`}
+        >
+          <Settings className="w-3 h-3" />
+          <span>Score</span>
+        </button>
+      </div>
 
-            {/* Note pitch display */}
-            {selectedEvent.type === 'note' && selectedEvent.pitches.length > 0 && (
-              <div className="flex items-center justify-between">
-                <span className="text-stone-600">Pitch:</span>
-                <span className="font-serif font-bold text-base text-stone-900">
-                  {selectedEvent.pitches
-                    .map((p) => formatPitchName(p, score.metadata.initialKeySignature))
-                    .join(' - ')}
+      {/* Scrollable Content */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        {/* ================= TAB 1: BEAT & OBJECT CONTROLS ================= */}
+        {activeTab === 'active' && (
+          <>
+            {/* 1. Note Value Section (1 to 4 notes per beat) */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide">
+                  Beat Value (Notes / Beat)
+                </span>
+                <span className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded font-bold">
+                  {effectiveVal} note{effectiveVal > 1 ? 's' : ''}
                 </span>
               </div>
-            )}
 
-            {/* Duration Selector for Selected Event */}
-            <div>
-              <label className="block text-[11px] font-semibold text-stone-700 mb-1">Duration</label>
-              <div className="grid grid-cols-6 gap-1">
-                {(['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty_second'] as NoteDuration[]).map(
-                  (dur) => (
-                    <button
-                      key={dur}
-                      onClick={() =>
-                        onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                          duration: dur,
-                        })
-                      }
-                      className={`py-1 rounded text-center font-serif text-sm ${
-                        selectedEvent!.duration === dur
-                          ? 'bg-stone-900 text-white font-bold'
-                          : 'bg-white border border-stone-200 text-stone-800 hover:bg-stone-100'
-                      }`}
-                    >
-                      {dur === 'whole' ? '𝅝' : dur === 'half' ? '𝅗𝅥' : dur === 'quarter' ? '𝅘𝅥' : dur === 'eighth' ? '𝅘𝅥𝅮' : dur === 'sixteenth' ? '𝅘𝅥𝅯' : '𝅘𝅥𝅰'}
-                    </button>
-                  )
+              <div className="grid grid-cols-4 gap-1.5">
+                {[1, 2, 3, 4].map((v) => (
+                  <button
+                    key={v}
+                    id={`inspector-val-${v}`}
+                    onClick={() => onChangeBeatValue && onChangeBeatValue(v)}
+                    className={`py-1.5 rounded-md font-bold text-xs flex flex-col items-center justify-center transition-all ${
+                      effectiveVal === v
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span className="text-sm">{v}</span>
+                    <span className="text-[9px] font-normal opacity-90">
+                      {v === 1 ? '♩' : v === 2 ? '♫' : v === 3 ? '3-let' : '16th'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-stone-500 mt-2 leading-tight">
+                Sets subdivisions for Beat {beatIndex + 1} and subsequent beats.
+              </p>
+            </div>
+
+            {/* 2. Chord Entry Section */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-1">
+                  <Layers className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide">
+                    Chord (Beat {beatIndex + 1})
+                  </span>
+                </div>
+                {activeBeatChord && (
+                  <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    {activeBeatChord}
+                  </span>
                 )}
               </div>
-            </div>
 
-            {/* Dotted Toggle */}
-            <div className="flex items-center justify-between">
-              <span className="text-stone-700">Dotted:</span>
-              <button
-                onClick={() =>
-                  onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                    isDotted: !selectedEvent!.isDotted,
-                  })
-                }
-                className={`px-3 py-1 rounded text-xs font-semibold ${
-                  selectedEvent.isDotted
-                    ? 'bg-amber-600 text-white'
-                    : 'bg-white border border-stone-300 text-stone-700'
-                }`}
-              >
-                {selectedEvent.isDotted ? '• Dotted ON' : 'Off'}
-              </button>
-            </div>
-
-            {/* Accidental Toggle */}
-            {selectedEvent.type === 'note' && (
-              <div>
-                <label className="block text-[11px] font-semibold text-stone-700 mb-1">Accidental</label>
-                <div className="grid grid-cols-5 gap-1 text-center font-serif">
-                  {(['natural', 'sharp', 'flat', 'double_sharp', 'double_flat'] as AccidentalType[]).map(
-                    (acc) => {
-                      const hasAcc = selectedEvent!.pitches[0]?.accidental === acc;
-                      return (
-                        <button
-                          key={acc}
-                          onClick={() => {
-                            const updatedPitches = selectedEvent!.pitches.map((p) => ({
-                              ...p,
-                              accidental: hasAcc ? null : acc,
-                            }));
-                            onUpdateEvent(
-                              selectedMeasure.id,
-                              selection.staff!,
-                              selectedEvent!.id,
-                              { pitches: updatedPitches }
-                            );
-                          }}
-                          className={`py-1 rounded border text-sm ${
-                            hasAcc
-                              ? 'bg-stone-900 text-white font-bold border-stone-900'
-                              : 'bg-white border-stone-200 text-stone-800 hover:bg-stone-100'
-                          }`}
-                        >
-                          {acc === 'natural' ? '♮' : acc === 'sharp' ? '♯' : acc === 'flat' ? '♭' : acc === 'double_sharp' ? '𝄪' : '𝄫'}
-                        </button>
-                      );
-                    }
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Pianotastic Fingering (1 to 5) */}
-            {selectedEvent.type === 'note' && (
-              <div>
-                <label className="block text-[11px] font-semibold text-stone-700 mb-1">
-                  Piano Fingering (1 to 5)
-                </label>
-                <div className="grid grid-cols-5 gap-1 font-serif">
-                  {[1, 2, 3, 4, 5].map((num) => (
-                    <button
-                      key={num}
-                      onClick={() =>
-                        onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                          fingerNumber: selectedEvent!.fingerNumber === num ? undefined : num,
-                        })
+              {/* Quick Popular Chord Chips */}
+              <div className="flex flex-wrap gap-1 mb-2">
+                {quickChords.map((chordName) => (
+                  <button
+                    key={chordName}
+                    id={`quick-chord-${chordName}`}
+                    onClick={() => {
+                      if (activeMeasure && onUpdateBeatChord) {
+                        onUpdateBeatChord(activeMeasure.id, beatIndex, chordName);
                       }
-                      className={`py-1 rounded border font-bold text-xs ${
-                        selectedEvent!.fingerNumber === num
-                          ? 'bg-amber-600 text-white border-amber-600'
-                          : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      {num}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Lyric Syllable */}
-            {selectedEvent.type === 'note' && (
-              <div className="space-y-1">
-                <label className="block text-[11px] font-semibold text-stone-700">Lyric Syllable</label>
-                <div className="flex items-center space-x-1.5">
-                  <input
-                    type="text"
-                    placeholder="e.g. Tra-, la, la"
-                    value={selectedEvent.lyricSyllable || ''}
-                    onChange={(e) =>
-                      onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                        lyricSyllable: e.target.value,
-                      })
-                    }
-                    className="flex-1 px-2 py-1 border border-stone-300 rounded bg-white text-xs focus:ring-1 focus:ring-amber-500"
-                  />
-                  <button
-                    onClick={() =>
-                      onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                        lyricHyphen: !selectedEvent!.lyricHyphen,
-                      })
-                    }
-                    title="Toggle Syllable Hyphen (-)"
-                    className={`px-2 py-1 rounded text-xs font-bold border ${
-                      selectedEvent.lyricHyphen
-                        ? 'bg-stone-900 text-white border-stone-900'
-                        : 'bg-white border-stone-300 text-stone-700'
+                    }}
+                    className={`px-2 py-1 rounded text-xs font-bold transition-colors ${
+                      activeBeatChord === chordName
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'bg-white border border-stone-200 text-stone-800 hover:bg-blue-50 hover:border-blue-300'
                     }`}
                   >
-                    -
+                    {chordName}
                   </button>
-                </div>
+                ))}
               </div>
-            )}
 
-            {/* Hand Allocation */}
-            {selectedEvent.type === 'note' && (
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-stone-700">Staff / Hand:</span>
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={() =>
-                      onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                        hand: 'RH',
-                      })
-                    }
-                    className={`px-2.5 py-1 rounded text-xs font-semibold ${
-                      (selectedEvent.hand || selection.staff) === 'RH'
-                        ? 'bg-amber-600 text-white'
-                        : 'bg-white border border-stone-200 text-stone-700'
-                    }`}
-                  >
-                    RH
-                  </button>
-                  <button
-                    onClick={() =>
-                      onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                        hand: 'LH',
-                      })
-                    }
-                    className={`px-2.5 py-1 rounded text-xs font-semibold ${
-                      (selectedEvent.hand || selection.staff) === 'LH'
-                        ? 'bg-amber-600 text-white'
-                        : 'bg-white border border-stone-200 text-stone-700'
-                    }`}
-                  >
-                    LH
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Articulation Selector */}
-            {selectedEvent.type === 'note' && (
-              <div>
-                <label className="block text-[11px] font-semibold text-stone-700 mb-1">Articulation</label>
-                <div className="grid grid-cols-5 gap-1 text-center font-serif text-xs">
-                  {[
-                    { type: 'none', label: 'None' },
-                    { type: 'staccato', label: '• Stacc' },
-                    { type: 'accent', label: '> Acc' },
-                    { type: 'tenuto', label: '— Ten' },
-                    { type: 'fermata', label: '𝄐 Ferm' },
-                  ].map((item) => (
-                    <button
-                      key={item.type}
-                      onClick={() =>
-                        onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                          articulation: item.type as ArticulationType,
-                        })
-                      }
-                      className={`py-1 rounded border ${
-                        (selectedEvent!.articulation || 'none') === item.type
-                          ? 'bg-amber-600 text-white font-bold border-amber-600'
-                          : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Note-Level Teacher Note */}
-            {selectedEvent.type === 'note' && (
-              <div className="space-y-1">
-                <label className="block text-[11px] font-semibold text-stone-700">Teacher Note for Note</label>
+              {/* Custom Chord Input Field */}
+              <div className="flex items-center space-x-1 mb-2">
                 <input
                   type="text"
-                  placeholder="e.g. Loose wrist, drop on beat"
-                  value={selectedEvent.teacherNote || ''}
-                  onChange={(e) =>
-                    onUpdateEvent(selectedMeasure.id, selection.staff!, selectedEvent!.id, {
-                      teacherNote: e.target.value,
-                    })
-                  }
-                  className="w-full px-2 py-1 border border-stone-300 rounded bg-white text-xs text-stone-800 focus:ring-1 focus:ring-amber-500"
+                  id="custom-chord-input"
+                  placeholder="e.g. C, Am, G7, Cmaj7"
+                  value={chordInput}
+                  onChange={(e) => setChordInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (activeMeasure && onUpdateBeatChord) {
+                        onUpdateBeatChord(activeMeasure.id, beatIndex, chordInput.trim());
+                      }
+                    }
+                  }}
+                  className="flex-1 bg-white border border-stone-300 rounded px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
+                <button
+                  id="apply-chord-btn"
+                  onClick={() => {
+                    if (activeMeasure && onUpdateBeatChord) {
+                      onUpdateBeatChord(activeMeasure.id, beatIndex, chordInput.trim());
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-blue-600 text-white rounded font-semibold text-xs hover:bg-blue-700 transition-colors"
+                >
+                  Set
+                </button>
               </div>
-            )}
-          </div>
-        )}
 
-        {/* SECTION 4: Measure Inspector */}
-        {selectedMeasure && (
-          <div className="space-y-3 bg-stone-50/60 p-3 rounded-lg border border-stone-200/70">
-            <div className="flex items-center justify-between border-b border-stone-200/70 pb-1.5">
-              <span className="font-bold text-stone-900">
-                Measure {selectedMeasure.measureNumber}
-              </span>
-              {/* Validation Status badge */}
-              {rhValidation && (
-                <span
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                    rhValidation.isValid
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-red-100 text-red-800'
+              {/* Clear / Delete Chord Button & Advanced Dialog Button */}
+              <div className="flex items-center justify-between pt-1 border-t border-stone-200/80">
+                <button
+                  id="delete-chord-btn"
+                  onClick={() => {
+                    if (activeMeasure && onUpdateBeatChord) {
+                      onUpdateBeatChord(activeMeasure.id, beatIndex, '');
+                    }
+                  }}
+                  disabled={!activeBeatChord}
+                  className="text-[11px] text-red-600 hover:text-red-800 font-semibold disabled:opacity-40 flex items-center space-x-1"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>Delete Chord</span>
+                </button>
+
+                <button
+                  onClick={onOpenChordDialog}
+                  className="text-[11px] text-stone-600 hover:text-stone-900 font-medium underline"
+                >
+                  Advanced Builder...
+                </button>
+              </div>
+            </div>
+
+            {/* 3. Lyric Entry Section */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-1">
+                  <Type className="w-3.5 h-3.5 text-stone-700" />
+                  <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide">
+                    Lyric (Beat {beatIndex + 1}
+                    {activeBeatNotes.length > 1 ? ` • Note ${subBeatIndex + 1}` : ''})
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-1 mb-2">
+                <input
+                  type="text"
+                  id="lyric-input"
+                  placeholder="Enter word or syllable..."
+                  value={lyricInput}
+                  onChange={(e) => {
+                    setLyricInput(e.target.value);
+                    if (activeMeasure && onUpdateBeatLyric) {
+                      onUpdateBeatLyric(
+                        activeMeasure.id,
+                        beatIndex,
+                        e.target.value,
+                        activeBeatNotes.length > 1 ? subBeatIndex : undefined
+                      );
+                    }
+                  }}
+                  className="flex-1 bg-white border border-stone-300 rounded px-2 py-1 text-xs font-serif italic focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                {activeBeatLyric && (
+                  <button
+                    id="clear-lyric-btn"
+                    onClick={() => {
+                      setLyricInput('');
+                      if (activeMeasure && onUpdateBeatLyric) {
+                        onUpdateBeatLyric(
+                          activeMeasure.id,
+                          beatIndex,
+                          '',
+                          activeBeatNotes.length > 1 ? subBeatIndex : undefined
+                        );
+                      }
+                    }}
+                    title="Clear Lyric"
+                    className="p-1 rounded text-stone-400 hover:text-red-600 hover:bg-stone-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Beat Navigation */}
+              <div className="flex items-center justify-between text-[11px] text-stone-600 pt-1 border-t border-stone-200/80">
+                <button
+                  onClick={() => {
+                    if (onSelectBeat && activeMeasure) {
+                      if (beatIndex > 0) {
+                        onSelectBeat(activeMeasure.id, beatIndex - 1, 0);
+                      } else if (measureIdx > 0) {
+                        const prevM = score.measures[measureIdx - 1];
+                        const prevTotal = getMeasureTotalBeats(prevM, score.metadata.initialTimeSignature);
+                        onSelectBeat(prevM.id, prevTotal - 1, 0);
+                      }
+                    }
+                  }}
+                  className="hover:text-stone-900 font-semibold flex items-center space-x-0.5"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Prev Beat</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onSelectBeat && activeMeasure) {
+                      if (beatIndex < totalBeats - 1) {
+                        onSelectBeat(activeMeasure.id, beatIndex + 1, 0);
+                      } else if (measureIdx < score.measures.length - 1) {
+                        const nextM = score.measures[measureIdx + 1];
+                        onSelectBeat(nextM.id, 0, 0);
+                      }
+                    }
+                  }}
+                  className="hover:text-stone-900 font-semibold flex items-center space-x-0.5"
+                >
+                  <span>Next Beat</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* 4. Symbol Menu Section (featuring ⌣ prominently) */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-1">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                  <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide">
+                    Symbols (Beat {beatIndex + 1})
+                  </span>
+                </div>
+                {activeBeatSymbols.length > 0 && (
+                  <span className="text-[10px] text-purple-700 font-bold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                    {activeBeatSymbols.join(' ')}
+                  </span>
+                )}
+              </div>
+
+              {/* Exact ⌣ Symbol Button Featured Prominently */}
+              <div className="mb-2">
+                <button
+                  id="symbol-undertie-btn"
+                  onClick={() => {
+                    if (activeMeasure && onToggleBeatSymbol) {
+                      onToggleBeatSymbol(activeMeasure.id, beatIndex, '⌣');
+                    }
+                  }}
+                  className={`w-full py-1.5 px-2 rounded-md font-bold text-xs flex items-center justify-between transition-colors ${
+                    activeBeatSymbols.includes('⌣')
+                      ? 'bg-purple-600 text-white shadow-xs'
+                      : 'bg-white border border-stone-300 text-stone-800 hover:bg-purple-50 hover:border-purple-300'
                   }`}
                 >
-                  {rhValidation.isValid
-                    ? 'Valid 4/4'
-                    : `${rhValidation.totalBeats} / ${rhValidation.capacity} beats`}
-                </span>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-base font-bold leading-none">⌣</span>
+                    <span>Curved Symbol (⌣)</span>
+                  </div>
+                  <span className="text-[10px] uppercase font-semibold">
+                    {activeBeatSymbols.includes('⌣') ? 'Active' : 'Add'}
+                  </span>
+                </button>
+              </div>
+
+              {/* Other musical symbols in grid */}
+              <div className="grid grid-cols-5 gap-1 mb-2">
+                {[
+                  { glyph: '•', name: 'Staccato' },
+                  { glyph: '>', name: 'Accent' },
+                  { glyph: '—', name: 'Tenuto' },
+                  { glyph: '𝄐', name: 'Fermata' },
+                  { glyph: 'tr', name: 'Trill' },
+                ].map((s) => (
+                  <button
+                    key={s.glyph}
+                    id={`symbol-${s.name.toLowerCase()}`}
+                    onClick={() => {
+                      if (activeMeasure && onToggleBeatSymbol) {
+                        onToggleBeatSymbol(activeMeasure.id, beatIndex, s.glyph);
+                      }
+                    }}
+                    title={s.name}
+                    className={`h-7 rounded flex items-center justify-center font-bold text-xs transition-colors ${
+                      activeBeatSymbols.includes(s.glyph)
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    {s.glyph}
+                  </button>
+                ))}
+              </div>
+
+              {/* Clear symbols button */}
+              {activeBeatSymbols.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (activeMeasure && onToggleBeatSymbol) {
+                      activeBeatSymbols.forEach((sym) => {
+                        onToggleBeatSymbol(activeMeasure.id, beatIndex, sym);
+                      });
+                    }
+                  }}
+                  className="w-full text-center text-[11px] text-red-600 hover:text-red-800 font-semibold pt-1 border-t border-stone-200/80"
+                >
+                  Clear All Symbols on Beat
+                </button>
               )}
             </div>
 
-            {/* Barline Type */}
-            <div>
-              <label className="block text-[11px] font-semibold text-stone-700 mb-1">Barline</label>
-              <select
-                value={selectedMeasure.barlineType}
-                onChange={(e) =>
-                  onUpdateMeasure(selectedMeasure.id, {
-                    barlineType: e.target.value as any,
-                    repeatEnd: e.target.value === 'repeat_end' || e.target.value === 'repeat_both',
-                    repeatStart: e.target.value === 'repeat_start' || e.target.value === 'repeat_both',
-                  })
-                }
-                className="w-full px-2 py-1.5 bg-white border border-stone-300 rounded-md font-medium text-xs text-stone-800"
-              >
-                <option value="single">Single Barline</option>
-                <option value="double">Double Barline</option>
-                <option value="end">Final End Barline</option>
-                <option value="repeat_start">Repeat Start (||:)</option>
-                <option value="repeat_end">Repeat End (:||)</option>
-                <option value="repeat_both">Repeat Both (:||:)</option>
-              </select>
-            </div>
+            {/* 5. Active Pitch & Beat Actions */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
+              <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide block mb-2">
+                Pitch & Beat Actions
+              </span>
 
-            {/* Repeats & Navigation Box */}
-            <div className="p-2.5 bg-white border border-stone-200 rounded-md space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-stone-800 flex items-center space-x-1">
-                  <Repeat className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Repeat & Navigation</span>
+              <div className="flex items-center justify-between mb-2 bg-white p-2 rounded border border-stone-200">
+                <span className="text-stone-600 font-medium">Notes in Beat:</span>
+                <span className="font-bold text-stone-900 text-sm">
+                  {activeBeatNotes.length > 0
+                    ? activeBeatNotes.map((p) => formatNoteLetter(p)).join(' • ')
+                    : '— (Rest)'}
                 </span>
               </div>
 
-              {/* Repeat Start & End Quick Buttons */}
-              <div className="grid grid-cols-2 gap-1.5 font-mono">
+              {/* Transposition */}
+              {onTransposeSelected && (
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  <button
+                    id="transpose-up-btn"
+                    onClick={() => onTransposeSelected(1)}
+                    className="py-1 px-2 bg-white border border-stone-200 rounded text-stone-700 hover:bg-stone-100 font-semibold flex items-center justify-center space-x-1"
+                  >
+                    <ArrowUp className="w-3 h-3 text-stone-600" />
+                    <span>+1 Semitone</span>
+                  </button>
+                  <button
+                    id="transpose-down-btn"
+                    onClick={() => onTransposeSelected(-1)}
+                    className="py-1 px-2 bg-white border border-stone-200 rounded text-stone-700 hover:bg-stone-100 font-semibold flex items-center justify-center space-x-1"
+                  >
+                    <ArrowDown className="w-3 h-3 text-stone-600" />
+                    <span>-1 Semitone</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Clear Beat to '—' Dash */}
+              {onClearCurrentBeat && (
                 <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateMeasure(selectedMeasure.id, {
-                      repeatStart: !selectedMeasure.repeatStart,
-                    })
-                  }
-                  className={`py-1 px-2 rounded border text-xs font-bold transition-colors ${
-                    selectedMeasure.repeatStart
-                      ? 'bg-amber-600 text-white border-amber-600'
-                      : 'bg-stone-50 border-stone-300 text-stone-700 hover:bg-stone-100'
+                  id="clear-beat-btn"
+                  onClick={onClearCurrentBeat}
+                  className="w-full py-1.5 bg-stone-200 text-stone-800 rounded font-semibold text-xs hover:bg-stone-300 transition-colors flex items-center justify-center space-x-1"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>Clear Notes to '—' Dash</span>
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ================= TAB 2: MEASURE & NAVIGATION CONTROLS ================= */}
+        {activeTab === 'measure' && (
+          <>
+            {/* Repeat & Jump Navigation Section */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
+              <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide block mb-2">
+                Repeats & Voltas (Measure {activeMeasure?.measureNumber})
+              </span>
+
+              {/* Repeat Start and End */}
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <button
+                  id="toggle-repeat-start-btn"
+                  onClick={() => {
+                    if (activeMeasure) {
+                      onUpdateMeasure(activeMeasure.id, {
+                        repeatStart: !activeMeasure.repeatStart,
+                      });
+                    }
+                  }}
+                  className={`py-1.5 px-2 rounded-md font-bold text-xs flex items-center justify-center space-x-1 transition-colors ${
+                    activeMeasure?.repeatStart
+                      ? 'bg-stone-900 text-white shadow-xs'
+                      : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
                   }`}
                 >
-                  ||: Repeat Start
+                  <span>||:</span>
+                  <span>Repeat Start</span>
                 </button>
 
                 <button
-                  type="button"
-                  onClick={() =>
-                    onUpdateMeasure(selectedMeasure.id, {
-                      repeatEnd: !selectedMeasure.repeatEnd,
-                      repeatCount: !selectedMeasure.repeatEnd ? selectedMeasure.repeatCount || 2 : undefined,
-                    })
-                  }
-                  className={`py-1 px-2 rounded border text-xs font-bold transition-colors ${
-                    selectedMeasure.repeatEnd
-                      ? 'bg-amber-600 text-white border-amber-600'
-                      : 'bg-stone-50 border-stone-300 text-stone-700 hover:bg-stone-100'
+                  id="toggle-repeat-end-btn"
+                  onClick={() => {
+                    if (activeMeasure) {
+                      onUpdateMeasure(activeMeasure.id, {
+                        repeatEnd: !activeMeasure.repeatEnd,
+                        repeatCount: activeMeasure.repeatEnd ? undefined : 2,
+                      });
+                    }
+                  }}
+                  className={`py-1.5 px-2 rounded-md font-bold text-xs flex items-center justify-center space-x-1 transition-colors ${
+                    activeMeasure?.repeatEnd
+                      ? 'bg-stone-900 text-white shadow-xs'
+                      : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
                   }`}
                 >
-                  :|| Repeat End
+                  <span>:||</span>
+                  <span>Repeat End</span>
                 </button>
               </div>
 
-              {/* Repeat Count */}
-              {selectedMeasure.repeatEnd && (
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-[11px] text-stone-600 font-medium">Passes:</span>
-                  <div className="flex items-center space-x-1">
-                    {[2, 3, 4].map((cnt) => (
+              {/* Repeat Count (if repeatEnd is active) */}
+              {activeMeasure?.repeatEnd && (
+                <div className="flex items-center justify-between mb-2 bg-white p-2 rounded border border-stone-200">
+                  <span className="text-stone-700 font-semibold">Play Count:</span>
+                  <div className="flex space-x-1">
+                    {[2, 3, 4].map((count) => (
                       <button
-                        key={cnt}
-                        type="button"
-                        onClick={() => onUpdateMeasure(selectedMeasure.id, { repeatCount: cnt })}
-                        className={`w-6 h-5 rounded text-[11px] font-bold border transition-colors ${
-                          (selectedMeasure.repeatCount || 2) === cnt
-                            ? 'bg-stone-900 text-white border-stone-900'
-                            : 'bg-stone-50 border-stone-300 text-stone-700 hover:bg-stone-100'
+                        key={count}
+                        onClick={() =>
+                          onUpdateMeasure(activeMeasure.id, { repeatCount: count })
+                        }
+                        className={`w-6 h-6 rounded text-xs font-bold ${
+                          (activeMeasure.repeatCount || 2) === count
+                            ? 'bg-stone-900 text-white'
+                            : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
                         }`}
                       >
-                        {cnt}x
+                        {count}x
                       </button>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Volta Endings */}
-              <div>
-                <label className="block text-[11px] font-semibold text-stone-700 mb-1">
-                  Volta (Alternate Ending)
+              {/* Volta Endings (1st, 2nd, 3rd) */}
+              <div className="mb-3">
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Volta Ending Brackets
                 </label>
                 <div className="grid grid-cols-4 gap-1">
-                  {[
-                    { val: undefined, label: 'None' },
-                    { val: 1 as VoltaEnding, label: '1st' },
-                    { val: 2 as VoltaEnding, label: '2nd' },
-                    { val: 3 as VoltaEnding, label: '3rd' },
-                  ].map((item) => (
+                  {([undefined, 1, 2, 3] as (VoltaEnding | undefined)[]).map((v) => (
                     <button
-                      key={item.label}
-                      type="button"
-                      onClick={() => onUpdateMeasure(selectedMeasure.id, { voltaEnding: item.val })}
-                      className={`py-1 rounded text-center text-xs font-semibold border transition-colors ${
-                        selectedMeasure.voltaEnding === item.val
-                          ? 'bg-stone-900 text-white border-stone-900'
-                          : 'bg-stone-50 border-stone-300 text-stone-700 hover:bg-stone-100'
+                      key={v ?? 'none'}
+                      id={`volta-${v ?? 'none'}`}
+                      onClick={() => {
+                        if (activeMeasure) {
+                          onUpdateMeasure(activeMeasure.id, { voltaEnding: v });
+                        }
+                      }}
+                      className={`py-1 rounded font-semibold text-xs transition-colors ${
+                        activeMeasure?.voltaEnding === v
+                          ? 'bg-stone-900 text-white'
+                          : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
                       }`}
                     >
-                      {item.label}
+                      {v ? `${v}st Ending` : 'None'}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Target Marker: Segno, Coda, Fine */}
-              <div>
-                <label className="block text-[11px] font-semibold text-stone-700 mb-1">
-                  Target Marker
+              {/* Navigation Target Markers */}
+              <div className="mb-3">
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Target Markers (Segno, Coda, Fine)
                 </label>
-                <select
-                  value={selectedMeasure.navigationTarget || 'none'}
-                  onChange={(e) =>
-                    onUpdateMeasure(selectedMeasure.id, {
-                      navigationTarget: e.target.value as NavigationTarget,
-                    })
-                  }
-                  className="w-full px-2 py-1 bg-white border border-stone-300 rounded text-xs"
-                >
-                  <option value="none">None</option>
-                  <option value="Segno">Segno (𝄋)</option>
-                  <option value="Coda">Coda (𝄌)</option>
-                  <option value="Fine">Fine (End of piece)</option>
-                </select>
+                <div className="grid grid-cols-4 gap-1">
+                  {(['none', 'Segno', 'Coda', 'Fine'] as NavigationTarget[]).map((target) => (
+                    <button
+                      key={target}
+                      id={`nav-target-${target.toLowerCase()}`}
+                      onClick={() => {
+                        if (activeMeasure) {
+                          onUpdateMeasure(activeMeasure.id, {
+                            navigationTarget: target === 'none' ? undefined : target,
+                          });
+                        }
+                      }}
+                      className={`py-1 rounded font-semibold text-xs transition-colors ${
+                        (activeMeasure?.navigationTarget || 'none') === target
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      {target === 'none'
+                        ? 'None'
+                        : target === 'Segno'
+                        ? '𝄋 Segno'
+                        : target === 'Coda'
+                        ? '𝄌 Coda'
+                        : 'Fine'}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Navigation Jump Instruction */}
+              {/* Navigation Jumps */}
               <div>
-                <label className="block text-[11px] font-semibold text-stone-700 mb-1">
-                  Jump Instruction (Measure End)
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Score Jumps & Direction
                 </label>
                 <select
-                  value={selectedMeasure.navigationJump || 'none'}
-                  onChange={(e) =>
-                    onUpdateMeasure(selectedMeasure.id, {
-                      navigationJump: e.target.value as NavigationJump,
-                    })
-                  }
-                  className="w-full px-2 py-1 bg-white border border-stone-300 rounded text-xs"
+                  id="nav-jump-select"
+                  value={activeMeasure?.navigationJump || 'none'}
+                  onChange={(e) => {
+                    if (activeMeasure) {
+                      onUpdateMeasure(activeMeasure.id, {
+                        navigationJump:
+                          e.target.value === 'none' ? undefined : (e.target.value as NavigationJump),
+                      });
+                    }
+                  }}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-stone-500"
                 >
                   <option value="none">None</option>
-                  <option value="To Coda">To Coda 𝄌</option>
-                  <option value="D.C.">D.C. (Da Capo)</option>
+                  <option value="D.C.">D.C. (Da Capo - from beginning)</option>
                   <option value="D.C. al Fine">D.C. al Fine</option>
                   <option value="D.C. al Coda">D.C. al Coda</option>
-                  <option value="D.S.">D.S. (Dal Segno)</option>
+                  <option value="D.S.">D.S. (Dal Segno - from 𝄋)</option>
                   <option value="D.S. al Fine">D.S. al Fine</option>
                   <option value="D.S. al Coda">D.S. al Coda</option>
+                  <option value="To Coda">To Coda (𝄌)</option>
                 </select>
               </div>
             </div>
 
-            {/* Measure Tempo Override */}
-            <div className="p-2.5 bg-white border border-stone-200 rounded-md space-y-1.5">
-              <label className="flex items-center space-x-2 text-xs text-stone-800 font-semibold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!!selectedMeasure.tempoBpm}
-                  onChange={(e) =>
-                    onUpdateMeasure(selectedMeasure.id, {
-                      tempoBpm: e.target.checked ? score.metadata.tempoBpm : undefined,
-                      tempoBeatUnit: e.target.checked ? 'quarter' : undefined,
-                    })
-                  }
-                  className="rounded border-stone-300 text-stone-900"
-                />
-                <span>Tempo Change at Measure</span>
-              </label>
+            {/* Measure Operations (Add, Insert, Duplicate, Delete) */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200 space-y-2">
+              <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide block">
+                Measure Actions
+              </span>
 
-              {selectedMeasure.tempoBpm && (
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div>
-                    <label className="block text-[10px] text-stone-600 font-medium">BPM (40-240)</label>
-                    <input
-                      type="number"
-                      min={40}
-                      max={240}
-                      value={selectedMeasure.tempoBpm}
-                      onChange={(e) =>
-                        onUpdateMeasure(selectedMeasure.id, {
-                          tempoBpm: Math.max(40, Math.min(240, parseInt(e.target.value) || 100)),
-                        })
-                      }
-                      className="w-full px-2 py-1 bg-stone-50 border border-stone-300 rounded text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-stone-600 font-medium">Beat Unit</label>
-                    <select
-                      value={selectedMeasure.tempoBeatUnit || 'quarter'}
-                      onChange={(e) =>
-                        onUpdateMeasure(selectedMeasure.id, {
-                          tempoBeatUnit: e.target.value as TempoBeatUnit,
-                        })
-                      }
-                      className="w-full px-2 py-1 bg-stone-50 border border-stone-300 rounded text-xs"
-                    >
-                      <option value="quarter">Quarter (♩)</option>
-                      <option value="half">Half (𝅗𝅥)</option>
-                      <option value="dotted_quarter">Dotted Qtr (♩.)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-            </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  id="insert-measure-before-btn"
+                  onClick={() => activeMeasure && onInsertMeasureBefore(activeMeasure.id)}
+                  className="py-1 px-2 bg-white border border-stone-200 rounded text-stone-700 hover:bg-stone-100 font-semibold flex items-center justify-center space-x-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Insert Before</span>
+                </button>
 
-            {/* System Break / Page Break Toggles */}
-            <div className="space-y-1.5 pt-1">
-              <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!!selectedMeasure.systemBreak}
-                  onChange={(e) =>
-                    onUpdateMeasure(selectedMeasure.id, { systemBreak: e.target.checked })
-                  }
-                  className="rounded border-stone-300 text-stone-900"
-                />
-                <span>Force Line / System Break after this measure</span>
-              </label>
-              <label className="flex items-center space-x-2 text-xs text-stone-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!!selectedMeasure.pageBreak}
-                  onChange={(e) =>
-                    onUpdateMeasure(selectedMeasure.id, { pageBreak: e.target.checked })
-                  }
-                  className="rounded border-stone-300 text-stone-900"
-                />
-                <span>Force Page Break after this measure</span>
-              </label>
-            </div>
+                <button
+                  id="insert-measure-after-btn"
+                  onClick={() => activeMeasure && onInsertMeasureAfter(activeMeasure.id)}
+                  className="py-1 px-2 bg-white border border-stone-200 rounded text-stone-700 hover:bg-stone-100 font-semibold flex items-center justify-center space-x-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Insert After</span>
+                </button>
 
-            {/* Measure-Level Teacher / Practice Instruction */}
-            <div className="space-y-1 pt-1">
-              <label className="block text-[11px] font-semibold text-stone-700">
-                Measure Teacher Tip / Practice Goal
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Hands separately first; count out loud"
-                value={selectedMeasure.teacherNote || ''}
-                onChange={(e) =>
-                  onUpdateMeasure(selectedMeasure.id, {
-                    teacherNote: e.target.value,
-                  })
-                }
-                className="w-full px-2 py-1 border border-stone-300 rounded bg-white text-xs text-stone-800 focus:ring-1 focus:ring-amber-500"
-              />
-            </div>
+                <button
+                  id="duplicate-measure-btn"
+                  onClick={() => activeMeasure && onDuplicateMeasure(activeMeasure.id)}
+                  className="py-1 px-2 bg-white border border-stone-200 rounded text-stone-700 hover:bg-stone-100 font-semibold flex items-center justify-center space-x-1"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>Duplicate</span>
+                </button>
 
-            {/* Add Chord Symbol to Measure Button */}
-            <button
-              onClick={onOpenChordDialog}
-              className="w-full py-1.5 px-2.5 bg-white border border-stone-300 rounded-md text-stone-800 hover:bg-stone-100 font-medium text-xs flex items-center justify-center space-x-1.5 shadow-2xs"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>Add / Edit Chord Symbol</span>
-            </button>
+                <button
+                  id="clear-measure-btn"
+                  onClick={() => activeMeasure && onClearMeasure(activeMeasure.id)}
+                  className="py-1 px-2 bg-white border border-stone-200 rounded text-stone-700 hover:bg-stone-100 font-semibold flex items-center justify-center space-x-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Clear All</span>
+                </button>
+              </div>
 
-            {/* Measure Actions */}
-            <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-stone-200">
+              {/* Line Break Toggle Button */}
               <button
-                onClick={() => onInsertMeasureBefore(selectedMeasure.id)}
-                className="p-1.5 rounded bg-white border border-stone-200 hover:bg-stone-100 text-left flex items-center space-x-1"
+                id="toggle-line-break-btn"
+                onClick={() => activeMeasure && onToggleLineBreak && onToggleLineBreak(activeMeasure.id)}
+                className={`w-full py-1.5 px-2.5 rounded font-semibold text-xs border transition-colors flex items-center justify-between ${
+                  activeMeasure?.systemBreak
+                    ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-xs'
+                    : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
+                }`}
+                title="Force score system to break after this measure"
               >
-                <PlusCircle className="w-3 h-3 text-stone-500" />
-                <span className="text-[11px]">Insert Before</span>
+                <span className="flex items-center space-x-1.5">
+                  <CornerDownLeft className="w-3.5 h-3.5 text-stone-500" />
+                  <span>Line Break After Measure</span>
+                </span>
+                <span className="text-[10px] bg-stone-100 text-stone-600 px-1 py-0.5 rounded font-mono border border-stone-200">
+                  {activeMeasure?.systemBreak ? 'Active ↵' : 'Enter ↵'}
+                </span>
               </button>
+
               <button
-                onClick={() => onInsertMeasureAfter(selectedMeasure.id)}
-                className="p-1.5 rounded bg-white border border-stone-200 hover:bg-stone-100 text-left flex items-center space-x-1"
+                id="delete-measure-btn"
+                onClick={() => activeMeasure && onDeleteMeasure(activeMeasure.id)}
+                disabled={score.measures.length <= 1}
+                className="w-full py-1.5 bg-red-50 text-red-700 border border-red-200 rounded font-semibold text-xs hover:bg-red-100 disabled:opacity-40 transition-colors flex items-center justify-center space-x-1"
               >
-                <PlusCircle className="w-3 h-3 text-stone-500" />
-                <span className="text-[11px]">Insert After</span>
-              </button>
-              <button
-                onClick={() => onDuplicateMeasure(selectedMeasure.id)}
-                className="p-1.5 rounded bg-white border border-stone-200 hover:bg-stone-100 text-left flex items-center space-x-1"
-              >
-                <Copy className="w-3 h-3 text-stone-500" />
-                <span className="text-[11px]">Duplicate</span>
-              </button>
-              <button
-                onClick={() => onClearMeasure(selectedMeasure.id)}
-                className="p-1.5 rounded bg-white border border-stone-200 hover:bg-stone-100 text-left flex items-center space-x-1 text-amber-800"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span className="text-[11px]">Clear Notes</span>
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Measure</span>
               </button>
             </div>
-
-            <button
-              onClick={() => onDeleteMeasure(selectedMeasure.id)}
-              disabled={score.measures.length <= 1}
-              className="w-full p-1.5 rounded bg-red-50 text-red-700 hover:bg-red-100 flex items-center justify-center space-x-1 font-semibold disabled:opacity-30"
-            >
-              <Trash2 className="w-3 h-3 text-red-600" />
-              <span>Delete Measure</span>
-            </button>
-          </div>
+          </>
         )}
 
-        {/* SECTION 5: Add Measure to End */}
-        <button
-          id="add-measure-btn"
-          onClick={onAddMeasure}
-          className="w-full py-2 px-3 rounded-lg bg-stone-900 text-white font-medium hover:bg-stone-800 flex items-center justify-center space-x-2 shadow-xs"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>Add Measure at End</span>
-        </button>
-
-        {/* SECTION: Pianotastic Learning Layer (Educational Annotation System) */}
-        {(() => {
-          const learning = score.learningLayer || DEFAULT_LEARNING_LAYER;
-          const isPractice = learning.viewMode === 'practice_sheet';
-
-          return (
-            <div className="space-y-3 bg-amber-50/50 p-3 rounded-lg border border-amber-200/80 shadow-2xs">
-              {/* Header with Title and View Mode Badge */}
-              <div className="flex items-center justify-between border-b border-amber-200/60 pb-2">
-                <div className="flex items-center space-x-1.5">
-                  <GraduationCap className="w-4 h-4 text-amber-800" />
-                  <span className="font-serif font-bold text-xs text-amber-950">Learning Layer</span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={learning.enabled}
-                    onChange={(e) =>
-                      onUpdateLearningLayer?.({
-                        enabled: e.target.checked,
-                      })
-                    }
-                    className="sr-only peer"
-                  />
-                  <div className="w-8 h-4 bg-stone-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-3 after:w-3.5 after:transition-all peer-checked:bg-amber-600"></div>
-                  <span className="ml-1.5 text-[10px] font-semibold text-amber-900">
-                    {learning.enabled ? 'ON' : 'OFF'}
-                  </span>
-                </label>
-              </div>
-
-              {/* View Mode Toggle */}
-              <div className="space-y-1">
-                <label className="block text-[11px] font-semibold text-stone-700">Display View Mode</label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    onClick={() => onUpdateLearningLayer?.({ viewMode: 'professional' })}
-                    className={`py-1.5 px-2 rounded border text-xs font-medium transition-colors ${
-                      !isPractice
-                        ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
-                        : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                    }`}
-                  >
-                    Professional Score
-                  </button>
-                  <button
-                    onClick={() => onUpdateLearningLayer?.({ viewMode: 'practice_sheet', enabled: true })}
-                    className={`py-1.5 px-2 rounded border text-xs font-medium transition-colors ${
-                      isPractice
-                        ? 'bg-amber-700 text-white border-amber-700 shadow-2xs'
-                        : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                    }`}
-                  >
-                    Practice Sheet
-                  </button>
-                </div>
-              </div>
-
-              {learning.enabled && (
-                <>
-                  {/* Annotation Elements to Display */}
-                  <div className="space-y-1.5 pt-1 border-t border-amber-200/50">
-                    <span className="block text-[11px] font-semibold text-stone-800">
-                      Educational Annotations
-                    </span>
-
-                    <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100">
-                        <input
-                          type="checkbox"
-                          checked={learning.showRH_LH}
-                          onChange={(e) => onUpdateLearningLayer?.({ showRH_LH: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">RH / LH Staves</span>
-                      </label>
-
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100">
-                        <input
-                          type="checkbox"
-                          checked={learning.showFingerNumbers}
-                          onChange={(e) => onUpdateLearningLayer?.({ showFingerNumbers: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">Fingering (1-5)</span>
-                      </label>
-
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100">
-                        <input
-                          type="checkbox"
-                          checked={learning.showNoteNames}
-                          onChange={(e) => onUpdateLearningLayer?.({ showNoteNames: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">Note Names</span>
-                      </label>
-
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100">
-                        <input
-                          type="checkbox"
-                          checked={learning.showSolfege}
-                          onChange={(e) => onUpdateLearningLayer?.({ showSolfege: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">Solfege (Do-Re)</span>
-                      </label>
-
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100">
-                        <input
-                          type="checkbox"
-                          checked={learning.showBeatNumbers}
-                          onChange={(e) => onUpdateLearningLayer?.({ showBeatNumbers: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">Beat Numbers</span>
-                      </label>
-
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100">
-                        <input
-                          type="checkbox"
-                          checked={learning.showPracticeCounts}
-                          onChange={(e) => onUpdateLearningLayer?.({ showPracticeCounts: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">Counts (1 & 2 &)</span>
-                      </label>
-
-                      <label className="flex items-center space-x-1.5 cursor-pointer bg-white/70 p-1 rounded border border-amber-100 col-span-2">
-                        <input
-                          type="checkbox"
-                          checked={learning.showTeacherNotes}
-                          onChange={(e) => onUpdateLearningLayer?.({ showTeacherNotes: e.target.checked })}
-                          className="rounded border-stone-300 text-amber-600"
-                        />
-                        <span className="font-medium text-stone-800">Teacher Notes & Tips</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Annotation Placement */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-stone-700">
-                      Annotation Placement
-                    </label>
-                    <div className="grid grid-cols-2 gap-1 text-[10px]">
-                      {[
-                        { id: 'above_notes', label: 'Above Notes' },
-                        { id: 'below_notes', label: 'Below Notes' },
-                        { id: 'above_staff', label: 'Above Staff' },
-                        { id: 'below_staff', label: 'Below Staff' },
-                      ].map((pos) => (
-                        <button
-                          key={pos.id}
-                          onClick={() => onUpdateLearningLayer?.({ position: pos.id as any })}
-                          className={`py-1 px-1.5 rounded border ${
-                            learning.position === pos.id
-                              ? 'bg-stone-900 text-white border-stone-900 font-semibold'
-                              : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                          }`}
-                        >
-                          {pos.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Student & Practice Assignment Details */}
-                  <div className="space-y-2 pt-2 border-t border-amber-200/50">
-                    <span className="block text-[11px] font-semibold text-stone-800">
-                      Student & Assignment Info
-                    </span>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] text-stone-600">Student Name</label>
-                        <input
-                          type="text"
-                          value={learning.studentName || ''}
-                          placeholder="e.g. Alex"
-                          onChange={(e) => onUpdateLearningLayer?.({ studentName: e.target.value })}
-                          className="w-full px-2 py-1 bg-white border border-stone-300 rounded text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-stone-600">Lesson Date</label>
-                        <input
-                          type="date"
-                          value={learning.lessonDate || ''}
-                          onChange={(e) => onUpdateLearningLayer?.({ lessonDate: e.target.value })}
-                          className="w-full px-2 py-1 bg-white border border-stone-300 rounded text-xs"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Repetition Goals */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[10px] text-stone-600">Repetition Checklist Boxes</label>
-                        <label className="flex items-center space-x-1 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={learning.showPracticeRepetitions ?? true}
-                            onChange={(e) => onUpdateLearningLayer?.({ showPracticeRepetitions: e.target.checked })}
-                            className="rounded border-stone-300 text-amber-600"
-                          />
-                          <span className="text-[10px] text-stone-700">Show</span>
-                        </label>
-                      </div>
-                      <div className="grid grid-cols-3 gap-1">
-                        {[3, 5, 10].map((count) => (
-                          <button
-                            key={count}
-                            onClick={() => onUpdateLearningLayer?.({ targetRepetitions: count })}
-                            className={`py-1 rounded border text-xs font-semibold ${
-                              (learning.targetRepetitions || 5) === count
-                                ? 'bg-amber-600 text-white border-amber-600'
-                                : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                            }`}
-                          >
-                            {count} Repetitions
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* General Teacher Notes */}
-                    <div>
-                      <label className="block text-[10px] text-stone-600 mb-1">
-                        General Teacher Instructions
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={learning.teacherGeneralNotes || ''}
-                        onChange={(e) => onUpdateLearningLayer?.({ teacherGeneralNotes: e.target.value })}
-                        placeholder="e.g. Practice hands separately, count out loud..."
-                        className="w-full px-2 py-1 bg-white border border-stone-300 rounded text-xs text-stone-800"
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* SECTION 6: Layout Mode & Reset Layout */}
-        <div className="space-y-2.5 bg-stone-50/60 p-3 rounded-lg border border-stone-200/70">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-stone-800">Score Layout & Pages</span>
-            <span className="text-[10px] text-stone-500 uppercase font-semibold">
-              {score.layoutSettings.pageSize || 'A4'} • {score.layoutSettings.orientation}
-            </span>
-          </div>
-
-          {/* Bars Per Line Control */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-semibold text-stone-700">Bars Per Line</label>
-              <span className="text-[10px] text-stone-500 font-mono">
-                {score.layoutSettings.barsPerLine || 4} bars/line
+        {/* ================= TAB 3: SCORE & GLOBAL CONTROLS ================= */}
+        {activeTab === 'score' && (
+          <>
+            {/* Metadata (Title, Composer, Lyricist) */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200 space-y-2">
+              <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide block">
+                Score Information
               </span>
-            </div>
-            <div className="grid grid-cols-6 gap-1">
-              {[1, 2, 3, 4, 5, 6].map((num) => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => onUpdateLayout({ barsPerLine: num })}
-                  className={`py-1 rounded border text-xs font-semibold ${
-                    (score.layoutSettings.barsPerLine || 4) === num
-                      ? 'bg-stone-900 text-white border-stone-900'
-                      : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                  }`}
-                >
-                  {num}
-                </button>
-              ))}
-            </div>
-          </div>
 
-          {/* Orientation: Portrait / Landscape */}
-          <div className="grid grid-cols-2 gap-1.5">
-            <button
-              onClick={() => onUpdateLayout({ orientation: 'portrait' })}
-              className={`py-1.5 rounded border text-xs font-semibold ${
-                score.layoutSettings.orientation === 'portrait'
-                  ? 'bg-stone-900 text-white border-stone-900'
-                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              Portrait
-            </button>
-            <button
-              onClick={() => onUpdateLayout({ orientation: 'landscape' })}
-              className={`py-1.5 rounded border text-xs font-semibold ${
-                score.layoutSettings.orientation === 'landscape'
-                  ? 'bg-stone-900 text-white border-stone-900'
-                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              Landscape
-            </button>
-          </div>
-
-          {/* Page Size: A4 / Letter */}
-          <div className="grid grid-cols-2 gap-1.5">
-            <button
-              onClick={() => onUpdateLayout({ pageSize: 'A4' })}
-              className={`py-1 rounded border text-xs font-semibold ${
-                (score.layoutSettings.pageSize || 'A4') === 'A4'
-                  ? 'bg-stone-900 text-white border-stone-900'
-                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              A4 Sheet
-            </button>
-            <button
-              onClick={() => onUpdateLayout({ pageSize: 'Letter' })}
-              className={`py-1 rounded border text-xs font-semibold ${
-                score.layoutSettings.pageSize === 'Letter'
-                  ? 'bg-stone-900 text-white border-stone-900'
-                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              US Letter
-            </button>
-          </div>
-
-          {/* Page Margins */}
-          <div>
-            <label className="block text-[11px] font-semibold text-stone-700 mb-1">Page Margins</label>
-            <div className="grid grid-cols-3 gap-1">
-              {[
-                { label: 'Compact', val: 30 },
-                { label: 'Normal', val: 48 },
-                { label: 'Spacious', val: 64 },
-              ].map((m) => (
-                <button
-                  key={m.label}
-                  onClick={() =>
-                    onUpdateLayout({
-                      pageMarginTop: m.val,
-                      pageMarginBottom: m.val,
-                      pageMarginLeft: m.val,
-                      pageMarginRight: m.val,
-                    })
-                  }
-                  className={`py-1 rounded text-xs font-medium border ${
-                    (score.layoutSettings.pageMarginLeft || 48) === m.val
-                      ? 'bg-stone-900 text-white border-stone-900'
-                      : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Layout Mode */}
-          <div className="grid grid-cols-2 gap-1.5 pt-1">
-            <button
-              onClick={() => onUpdateLayout({ layoutMode: 'auto' })}
-              className={`py-1.5 rounded border text-xs font-semibold ${
-                score.layoutSettings.layoutMode === 'auto'
-                  ? 'bg-amber-100 text-amber-900 border-amber-300'
-                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              Auto Flow
-            </button>
-            <button
-              onClick={() => onUpdateLayout({ layoutMode: 'manual' })}
-              className={`py-1.5 rounded border text-xs font-semibold ${
-                score.layoutSettings.layoutMode === 'manual'
-                  ? 'bg-blue-100 text-blue-900 border-blue-300'
-                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              Manual Widths
-            </button>
-          </div>
-
-          {/* Pianotastic Academy Branding Toggle */}
-          <div className="pt-2 border-t border-stone-200 space-y-1.5">
-            <label className="flex items-center space-x-2 text-xs text-stone-800 font-semibold cursor-pointer">
-              <input
-                type="checkbox"
-                checked={score.layoutSettings.showAcademyBranding ?? true}
-                onChange={(e) => onUpdateLayout({ showAcademyBranding: e.target.checked })}
-                className="rounded border-stone-300 text-amber-600 focus:ring-amber-500"
-              />
-              <span>Pianotastic Academy Branding</span>
-            </label>
-            {score.layoutSettings.showAcademyBranding && (
-              <input
-                type="text"
-                value={score.layoutSettings.academyFooterText || 'Pianotastic Academy — Pianotastic Notation Studio'}
-                onChange={(e) => onUpdateLayout({ academyFooterText: e.target.value })}
-                placeholder="Footer branding text..."
-                className="w-full px-2 py-1 text-[11px] bg-white border border-stone-300 rounded text-stone-700"
-              />
-            )}
-          </div>
-
-          {/* Reset Layout button */}
-          <button
-            id="reset-layout-btn"
-            onClick={onResetLayout}
-            className="w-full py-1.5 px-2.5 rounded bg-white border border-stone-300 hover:bg-stone-100 text-stone-700 text-xs font-medium flex items-center justify-center space-x-1.5 mt-2"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-stone-500" />
-            <span>Reset Layout (Restore Auto)</span>
-          </button>
-        </div>
-
-        {/* SECTION 7: Playback Route & Navigation Diagnostics */}
-        {(() => {
-          const routeResult = calculatePlaybackRoute(score.measures);
-          const hasRepeatsOrJumps = score.measures.some(
-            (m) =>
-              m.repeatStart ||
-              m.repeatEnd ||
-              m.voltaEnding ||
-              (m.navigationTarget && m.navigationTarget !== 'none') ||
-              (m.navigationJump && m.navigationJump !== 'none')
-          );
-          if (!hasRepeatsOrJumps) return null;
-
-          return (
-            <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-lg space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-amber-900 text-xs flex items-center space-x-1">
-                  <Flag className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Playback Route</span>
-                </span>
-                {routeResult.errors.length === 0 ? (
-                  <span className="flex items-center space-x-1 text-[10px] font-semibold text-emerald-700">
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>Valid</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center space-x-1 text-[10px] font-semibold text-red-600">
-                    <AlertCircle className="w-3 h-3" />
-                    <span>Warning</span>
-                  </span>
-                )}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">Title</label>
+                <input
+                  type="text"
+                  id="score-title-input"
+                  value={score.metadata.title}
+                  onChange={(e) => onUpdateScoreMetadata({ title: e.target.value })}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-stone-500"
+                />
               </div>
 
-              {routeResult.errors.map((err, i) => (
-                <p key={i} className="text-[10px] text-red-700 font-medium">
-                  • {err}
-                </p>
-              ))}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">Composer</label>
+                <input
+                  type="text"
+                  id="score-composer-input"
+                  value={score.metadata.composer}
+                  onChange={(e) => onUpdateScoreMetadata({ composer: e.target.value })}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-stone-500"
+                />
+              </div>
 
-              <div className="font-mono text-[10px] text-amber-950 bg-white/80 p-1.5 rounded border border-amber-200/60 overflow-x-auto whitespace-nowrap">
-                {routeResult.route.map((step, idx) => (
-                  <span key={idx} className="mr-1">
-                    m.{step.measureNumber}
-                    {step.voltaEnding ? `(${step.voltaEnding})` : ''}
-                    {idx < routeResult.route.length - 1 ? ' → ' : ''}
-                  </span>
-                ))}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">Lyricist</label>
+                <input
+                  type="text"
+                  id="score-lyricist-input"
+                  value={score.metadata.lyricist || ''}
+                  onChange={(e) => onUpdateScoreMetadata({ lyricist: e.target.value })}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-stone-500"
+                />
               </div>
             </div>
-          );
-        })()}
+
+            {/* Musical Setup: Key, Time Sig, Bars/Line, Taal, Tempo */}
+            <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200 space-y-3">
+              <span className="font-bold text-stone-800 text-[11px] uppercase tracking-wide block">
+                Musical Settings
+              </span>
+
+              {/* Key Signature */}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Key Signature
+                </label>
+                <select
+                  id="key-signature-select"
+                  value={score.metadata.initialKeySignature}
+                  onChange={(e) => onUpdateScoreMetadata({ initialKeySignature: e.target.value })}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-stone-500"
+                >
+                  {Object.values(KEY_SIGNATURES).map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Time Signature */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] text-stone-500 uppercase font-bold">
+                    Time Signature
+                  </label>
+                  <button
+                    onClick={onOpenCustomTimeSignature}
+                    className="text-[10px] text-blue-600 hover:underline font-semibold"
+                  >
+                    Custom...
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {[
+                    { num: 4, den: 4, label: '4/4' },
+                    { num: 3, den: 4, label: '3/4' },
+                    { num: 2, den: 4, label: '2/4' },
+                    { num: 6, den: 8, label: '6/8' },
+                  ].map((ts) => {
+                    const isSelected =
+                      score.metadata.initialTimeSignature.numerator === ts.num &&
+                      score.metadata.initialTimeSignature.denominator === ts.den;
+                    return (
+                      <button
+                        key={ts.label}
+                        onClick={() =>
+                          onUpdateScoreMetadata({
+                            initialTimeSignature: { numerator: ts.num, denominator: ts.den },
+                          })
+                        }
+                        className={`py-1 rounded font-bold text-xs ${
+                          isSelected
+                            ? 'bg-stone-900 text-white'
+                            : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        {ts.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Measure Lock Per Line */}
+              <div className="bg-amber-50/60 p-2 rounded-lg border border-amber-200/80 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-amber-950 uppercase font-bold flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-amber-700" />
+                    Measure Lock Per Line
+                  </label>
+                  <span className="text-[10px] font-mono font-semibold text-amber-900">
+                    {score.layoutSettings.measureLockPerLine ? `${score.layoutSettings.measureLockPerLine} / line` : 'Off'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  <button
+                    id="panel-lock-off-btn"
+                    onClick={() => onUpdateLayout({ measureLockPerLine: null })}
+                    className={`py-1 rounded font-bold text-xs ${
+                      score.layoutSettings.measureLockPerLine == null
+                        ? 'bg-stone-900 text-white shadow-xs'
+                        : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    Off
+                  </button>
+                  {[1, 2, 3, 4, 5, 6].map((num) => (
+                    <button
+                      key={num}
+                      id={`panel-lock-${num}-btn`}
+                      onClick={() => onUpdateLayout({ measureLockPerLine: num })}
+                      className={`py-1 rounded font-bold text-xs ${
+                        score.layoutSettings.measureLockPerLine === num
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    id="panel-lock-custom-btn"
+                    onClick={() => {
+                      const current = score.layoutSettings.measureLockPerLine || 4;
+                      const val = prompt('Enter measures per line (1 to 24):', String(current));
+                      if (val) {
+                        const parsed = parseInt(val, 10);
+                        if (!isNaN(parsed) && parsed >= 1 && parsed <= 24) {
+                          onUpdateLayout({ measureLockPerLine: parsed });
+                        }
+                      }
+                    }}
+                    className={`py-1 rounded font-bold text-xs ${
+                      score.layoutSettings.measureLockPerLine && score.layoutSettings.measureLockPerLine > 6
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    Custom
+                  </button>
+                </div>
+              </div>
+
+              {/* Measures Per Line (Bars Per Line) */}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Bars Per Line (1 to 6)
+                </label>
+                <div className="grid grid-cols-6 gap-1">
+                  {[1, 2, 3, 4, 5, 6].map((bars) => (
+                    <button
+                      key={bars}
+                      id={`bars-per-line-${bars}`}
+                      onClick={() =>
+                        onUpdateLayout({
+                          barsPerLine: bars,
+                          measuresPerSystemAuto: bars,
+                          layoutMode: 'auto',
+                        })
+                      }
+                      className={`py-1 rounded font-bold text-xs ${
+                        (score.layoutSettings.barsPerLine || score.layoutSettings.measuresPerSystemAuto) === bars
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      {bars}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pickup Beat */}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Pickup Beat (Measure 1 start beat)
+                </label>
+                <select
+                  id="pickup-beat-select"
+                  value={score.metadata.pickupBeat || 1}
+                  onChange={(e) => onUpdateScoreMetadata({ pickupBeat: Number(e.target.value) })}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-stone-500"
+                >
+                  <option value={1}>Beat 1 (Full Bar - No Pickup)</option>
+                  <option value={2}>Beat 2 (Beat 1 Locked)</option>
+                  <option value={3}>Beat 3 (Beats 1 & 2 Locked)</option>
+                  <option value={4}>Beat 4 (Beats 1, 2 & 3 Locked)</option>
+                </select>
+              </div>
+
+              {/* Indian Taal */}
+              <div>
+                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
+                  Indian Classical Taal
+                </label>
+                <select
+                  id="indian-taal-select"
+                  value={score.metadata.indianTaal || 'None'}
+                  onChange={(e) => onUpdateScoreMetadata({ indianTaal: e.target.value })}
+                  className="w-full bg-white border border-stone-300 rounded px-2 py-1.5 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-stone-500"
+                >
+                  {indianTaals.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Tempo BPM */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] text-stone-500 uppercase font-bold">Tempo (BPM)</label>
+                  <span className="font-bold text-stone-900 text-xs">
+                    {score.metadata.tempoBpm || 80} BPM
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  id="tempo-slider"
+                  min="40"
+                  max="240"
+                  value={score.metadata.tempoBpm || 80}
+                  onChange={(e) => onUpdateScoreMetadata({ tempoBpm: Number(e.target.value) })}
+                  className="w-full accent-amber-600"
+                />
+              </div>
+
+              {/* Reset Layout */}
+              <button
+                id="reset-layout-btn"
+                onClick={onResetLayout}
+                className="w-full py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded font-semibold text-xs transition-colors flex items-center justify-center space-x-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset Layout to Defaults</span>
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </aside>
   );

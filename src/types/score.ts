@@ -154,7 +154,7 @@ export interface Measure {
   lhEvents: NoteEvent[]; // Left Hand / Bass staff
   chordSymbols: ChordSymbolEvent[];
   // Pianotastic custom notation format fields
-  beatNotes?: Record<number, Pitch[]>; // 0-based beat index -> array of pitches (for Value 1..4)
+  beatNotes?: Record<number, (Pitch | null)[]>; // 0-based beat index -> array of pitches/rests (for Value 1..4, null = empty subdivision)
   beatValues?: Record<number, number>; // 0-based beat index -> notes per beat (1, 2, 3, or 4)
   beatLyrics?: Record<string | number, string>; // 0-based beat index OR "b_subBeat" -> lyric syllable / word
   beatChords?: Record<number, string>; // 0-based beat index -> chord name, e.g. "C", "Am", "G7"
@@ -174,6 +174,8 @@ export interface Measure {
   teacherNote?: string;
   practiceInstruction?: string;
 }
+
+export type OctaveRange = 'low' | 'middle' | 'high';
 
 export type HandTemplate = 'Both' | 'RH' | 'LH';
 
@@ -204,6 +206,7 @@ export interface LayoutSettings {
   layoutMode: 'auto' | 'manual';
   measuresPerSystemAuto: number;
   barsPerLine?: number; // Configurable bars per line (e.g. 1, 2, 3, 4, 5, 6, or auto)
+  measureLockPerLine?: number | null; // Fixed measures per line lock (null = off, or 1..6, custom)
   pageMargins: { top: number; right: number; bottom: number; left: number };
   showMeasureNumbers: boolean;
   showAnnotations: boolean;

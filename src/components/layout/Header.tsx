@@ -23,6 +23,10 @@ import {
   Clock,
   Home,
   Plus,
+  Lock,
+  Unlock,
+  Columns,
+  AlignJustify,
 } from 'lucide-react';
 import { ExportService } from '../../services/exportService';
 
@@ -73,6 +77,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(score.metadata.title);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isCustomLockModalOpen, setIsCustomLockModalOpen] = useState(false);
+  const [customLockInput, setCustomLockInput] = useState<string>('4');
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -527,6 +533,97 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
+          {/* Format Menu */}
+          <div className="relative">
+            <button
+              id="menu-format-btn"
+              onClick={() => setActiveMenu(activeMenu === 'format' ? null : 'format')}
+              className={`px-2.5 py-1 rounded-md text-xs tracking-wide transition-colors ${
+                activeMenu === 'format' ? 'bg-stone-100 text-stone-900 font-medium' : 'hover:bg-stone-100 text-stone-700'
+              }`}
+            >
+              Format
+            </button>
+            {activeMenu === 'format' && (
+              <div
+                className="absolute left-0 top-full mt-1 w-60 bg-white border border-stone-200 rounded-lg shadow-lg py-1.5 z-50 text-xs font-sans text-stone-800"
+                onMouseLeave={() => setActiveMenu(null)}
+              >
+                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-500 tracking-wider flex items-center justify-between">
+                  <span>Measure Lock Per Line</span>
+                  <span className="font-mono text-stone-400">
+                    {score.layoutSettings.measureLockPerLine ? `${score.layoutSettings.measureLockPerLine}/line` : 'Off'}
+                  </span>
+                </div>
+
+                <div className="px-1.5 py-0.5 space-y-0.5">
+                  <button
+                    id="format-lock-off-btn"
+                    onClick={() => {
+                      onUpdateLayout({ measureLockPerLine: null });
+                      setActiveMenu(null);
+                      showToast('Measure Lock Per Line: Off (automatic reflow & manual line breaks)');
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded text-left hover:bg-stone-100 flex items-center justify-between"
+                  >
+                    <span className={score.layoutSettings.measureLockPerLine == null ? 'font-semibold text-amber-700' : ''}>
+                      Off
+                    </span>
+                    {score.layoutSettings.measureLockPerLine == null && <Check className="w-3.5 h-3.5 text-amber-700" />}
+                  </button>
+
+                  {[1, 2, 3, 4, 5, 6].map((num) => (
+                    <button
+                      key={num}
+                      id={`format-lock-${num}-btn`}
+                      onClick={() => {
+                        onUpdateLayout({ measureLockPerLine: num });
+                        setActiveMenu(null);
+                        showToast(`Measure Lock: ${num} per line`);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded text-left hover:bg-stone-100 flex items-center justify-between"
+                    >
+                      <span className={score.layoutSettings.measureLockPerLine === num ? 'font-semibold text-amber-700' : ''}>
+                        {num}
+                      </span>
+                      {score.layoutSettings.measureLockPerLine === num && <Check className="w-3.5 h-3.5 text-amber-700" />}
+                    </button>
+                  ))}
+
+                  <button
+                    id="format-lock-custom-btn"
+                    onClick={() => {
+                      setCustomLockInput(String(score.layoutSettings.measureLockPerLine || 4));
+                      setIsCustomLockModalOpen(true);
+                      setActiveMenu(null);
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded text-left hover:bg-stone-100 flex items-center justify-between text-stone-700"
+                  >
+                    <span className={score.layoutSettings.measureLockPerLine && score.layoutSettings.measureLockPerLine > 6 ? 'font-semibold text-amber-700' : ''}>
+                      Custom... {score.layoutSettings.measureLockPerLine && score.layoutSettings.measureLockPerLine > 6 ? `(${score.layoutSettings.measureLockPerLine})` : ''}
+                    </span>
+                    {score.layoutSettings.measureLockPerLine && score.layoutSettings.measureLockPerLine > 6 && <Check className="w-3.5 h-3.5 text-amber-700" />}
+                  </button>
+                </div>
+
+                <div className="my-1 border-t border-stone-100" />
+                <button
+                  onClick={() => {
+                    setCustomLockInput(String(score.layoutSettings.measureLockPerLine || 4));
+                    setIsCustomLockModalOpen(true);
+                    setActiveMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between text-stone-700"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Columns className="w-3.5 h-3.5 text-stone-500" />
+                    Custom Measures Per Line...
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Score Menu */}
           <div className="relative">
             <button
@@ -762,6 +859,82 @@ export const Header: React.FC<HeaderProps> = ({
           <span>Print / PDF</span>
         </button>
       </div>
+
+      {/* Custom Measure Lock Modal */}
+      {isCustomLockModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl border border-stone-300 max-w-sm w-full p-5 space-y-4">
+            <div>
+              <h3 className="font-semibold text-stone-900 text-sm flex items-center gap-2">
+                <Lock className="w-4 h-4 text-amber-600" />
+                Measure Lock Per Line
+              </h3>
+              <p className="text-xs text-stone-500 mt-1">
+                Force each score line to display a fixed number of measures. All lines align to page boundaries with content-aware measure widths.
+              </p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const parsed = parseInt(customLockInput, 10);
+                if (!isNaN(parsed) && parsed >= 1 && parsed <= 24) {
+                  onUpdateLayout({ measureLockPerLine: parsed });
+                  showToast(`Measure Lock set to ${parsed} per line`);
+                  setIsCustomLockModalOpen(false);
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1">
+                  Measures per line:
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={24}
+                  autoFocus
+                  value={customLockInput}
+                  onChange={(e) => setCustomLockInput(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-stone-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
+                  placeholder="e.g. 4"
+                />
+                <span className="text-[11px] text-stone-400 mt-1 block">
+                  Press <kbd className="px-1 py-0.5 rounded bg-stone-100 border text-[10px] font-mono">Enter</kbd> to apply immediately
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCustomLockModalOpen(false)}
+                  className="px-3 py-1.5 rounded border border-stone-300 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onUpdateLayout({ measureLockPerLine: null });
+                    showToast('Measure Lock disabled (Off)');
+                    setIsCustomLockModalOpen(false);
+                  }}
+                  className="px-3 py-1.5 rounded border border-stone-200 text-xs text-stone-600 hover:bg-stone-50"
+                >
+                  Turn Off
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded bg-stone-900 text-white text-xs font-medium hover:bg-stone-800"
+                >
+                  Apply
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Floating Action Toast Notification */}
       {toastMessage && (

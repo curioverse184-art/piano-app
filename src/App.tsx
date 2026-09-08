@@ -33,7 +33,6 @@ import { Header } from './components/layout/Header';
 import { MainToolbar } from './components/toolbar/MainToolbar';
 import { LeftToolPalette } from './components/palette/LeftToolPalette';
 import { NotationRenderer } from './components/notation/NotationRenderer';
-import { BeatValueBar } from './components/editor/BeatValueBar';
 import { PropertiesPanel } from './components/properties/PropertiesPanel';
 import { BottomPlaybackBar } from './components/playback/BottomPlaybackBar';
 import { VirtualPiano } from './components/piano/VirtualPiano';
@@ -85,6 +84,7 @@ export default function App() {
   // Playback & Input UI state
   const [playbackPosition, setPlaybackPosition] = useState<{ measureIndex: number; beat: number } | null>(null);
   const [isVirtualPianoOpen, setIsVirtualPianoOpen] = useState(true);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
   // Modals state
   const [isCustomTimeSigOpen, setIsCustomTimeSigOpen] = useState(false);
@@ -97,6 +97,12 @@ export default function App() {
   const [quantization, setQuantization] = useState('quarter');
   const [selectedChannel, setSelectedChannel] = useState(0);
   const [velocitySensitive, setVelocitySensitive] = useState(true);
+  const [appToast, setAppToast] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setAppToast(msg);
+    setTimeout(() => setAppToast(null), 3500);
+  }, []);
 
   // Push score to undo stack
   const pushScoreState = useCallback((newScore: Score) => {
@@ -687,46 +693,139 @@ export default function App() {
   }, [selection, score, activeHand, pushScoreState]);
 
   // Update Beat Lyric
-  const handleUpdateBeatLyric = useCallback((measureId: string, beatIndex: number, text: string) => {
-    setScore((prev) => {
-      const updatedMeasures = prev.measures.map((m) => {
-        if (m.id !== measureId) return m;
-        const nextLyrics = { ...(m.beatLyrics || {}), [beatIndex]: text };
-        const updatedM = { ...m, beatLyrics: nextLyrics };
-        return syncMeasureEventsFromBeatData(
-          updatedM,
-          prev.metadata.initialTimeSignature,
-          prev.metadata.handTemplate || 'Both'
-        );
+  const handleUpdateBeatLyric = useCallback(
+    (measureId: string, beatIndex: number, text: string, subBeatIndex?: number) => {
+      setScore((prev) => {
+        const updatedMeasures = prev.measures.map((m) => {
+          if (m.id !== measureId) return m;
+          const nextLyrics = { ...(m.beatLyrics || {}) };
+          const key =
+            subBeatIndex !== undefined && subBeatIndex > 0
+              ? `${beatIndex}_${subBeatIndex}`
+              : beatIndex;
+          if (text && text.trim()) {
+            nextLyrics[key] = text.trim();
+          } else {
+            delete nextLyrics[key];
+          }
+          const updatedM = { ...m, beatLyrics: nextLyrics };
+          return syncMeasureEventsFromBeatData(
+            updatedM,
+            prev.metadata.initialTimeSignature,
+            prev.metadata.handTemplate || 'Both'
+          );
+        });
+        const updated = { ...prev, measures: updatedMeasures };
+        pushScoreState(updated);
+        return updated;
       });
-      const updated = { ...prev, measures: updatedMeasures };
-      pushScoreState(updated);
-      return updated;
-    });
-  }, [pushScoreState]);
+    },
+    [pushScoreState]
+  );
 
-  // Update Beat Chord Symbol
-  const handleUpdateBeatChord = useCallback((measureId: string, beatIndex: number, chord: string) => {
-    setScore((prev) => {
-      const updatedMeasures = prev.measures.map((m) => {
-        if (m.id !== measureId) return m;
-        const existing = (m.chordSymbols || []).filter((c) => Math.floor(c.beatOffset) !== beatIndex);
-        if (chord.trim()) {
-          existing.push({
-            id: `cs_${Date.now()}`,
-            beatOffset: beatIndex,
-            root: chord.slice(0, 1).toUpperCase(),
-            quality: chord.slice(1),
-            formatted: chord,
-          });
-        }
-        return { ...m, chordSymbols: existing };
+  // Update Beat Chord Symbol (attached directly and strictly to this beat)
+  const handleUpdateBeatChord = useCallback(
+    (measureId: string, beatIndex: number, chord: string) => {
+      setScore((prev) => {
+        const updatedMeasures = prev.measures.map((m) => {
+          if (m.id !== measureId) return m;
+          const nextChords = { ...(m.beatChords || {}) };
+          if (chord && chord.trim()) {
+            nextChords[beatIndex] = chord.trim();
+          } else {
+            delete nextChords[beatIndex];
+          }
+          const updatedM: Measure = {
+            ...m,
+            beatChords: nextChords,
+          };
+          return syncMeasureEventsFromBeatData(
+            updatedM,
+            prev.metadata.initialTimeSignature,
+            prev.metadata.handTemplate || 'Both'
+          );
+        });
+        const updated = { ...prev, measures: updatedMeasures };
+        pushScoreState(updated);
+        return updated;
       });
-      const updated = { ...prev, measures: updatedMeasures };
-      pushScoreState(updated);
-      return updated;
-    });
-  }, [pushScoreState]);
+    },
+    [pushScoreState]
+  );
+
+  // Toggle Beat Symbol (such as ⌣ curved symbol, staccato, accent, etc.)
+  const handleToggleBeatSymbol = useCallback(
+    (measureId: string, beatIndex: number, symbol: string) => {
+      setScore((prev) => {
+        const updatedMeasures = prev.measures.map((m) => {
+          if (m.id !== measureId) return m;
+          const curSymbols = [...(m.beatSymbols?.[beatIndex] || [])];
+          let nextSymbols: string[];
+          if (curSymbols.includes(symbol)) {
+            nextSymbols = curSymbols.filter((s) => s !== symbol);
+          } else {
+            nextSymbols = [...curSymbols, symbol];
+          }
+          const nextBeatSymbols = { ...(m.beatSymbols || {}) };
+          if (nextSymbols.length > 0) {
+            nextBeatSymbols[beatIndex] = nextSymbols;
+          } else {
+            delete nextBeatSymbols[beatIndex];
+          }
+          const updatedM: Measure = { ...m, beatSymbols: nextBeatSymbols };
+          return syncMeasureEventsFromBeatData(
+            updatedM,
+            prev.metadata.initialTimeSignature,
+            prev.metadata.handTemplate || 'Both'
+          );
+        });
+        const updated = { ...prev, measures: updatedMeasures };
+        pushScoreState(updated);
+        return updated;
+      });
+    },
+    [pushScoreState]
+  );
+
+  // Toggle Manual Line Break after current or specified measure
+  const handleToggleLineBreak = useCallback(
+    (targetMeasureId?: string) => {
+      const mId = targetMeasureId || selection.measureId || score.measures[0]?.id;
+      if (!mId) return;
+      const mIdx = score.measures.findIndex((m) => m.id === mId);
+      if (mIdx < 0) return;
+
+      // If targetMeasureId is passed explicitly from clicking a measure's badge, toggle that measure directly.
+      // When pressing Enter while selecting a measure (e.g. Bar 3), break after Bar 2 so Bar 3 wraps to next line.
+      const breakTargetIdx = targetMeasureId ? mIdx : (mIdx > 0 ? mIdx - 1 : 0);
+      const targetM = score.measures[breakTargetIdx];
+      const newBreak = !targetM.systemBreak;
+
+      setScore((prev) => {
+        const updatedMeasures = prev.measures.map((m, idx) =>
+          idx === breakTargetIdx ? { ...m, systemBreak: newBreak } : m
+        );
+        const updated: Score = {
+          ...prev,
+          layoutSettings: {
+            ...prev.layoutSettings,
+            layoutMode: 'manual',
+            measureLockPerLine: null,
+          },
+          measures: updatedMeasures,
+        };
+        pushScoreState(updated);
+        return updated;
+      });
+
+      showToast(
+        newBreak
+          ? `Line break added after Bar ${breakTargetIdx + 1} ↵ (measures wrapped to next line)`
+          : `Line break removed from Bar ${breakTargetIdx + 1}`
+      );
+    },
+    [selection.measureId, score.measures, pushScoreState, showToast]
+  );
 
   // Delete Selected Event (legacy)
   const handleDeleteSelected = useCallback(() => {
@@ -848,6 +947,13 @@ export default function App() {
         return;
       }
 
+      // Enter -> Manual Line Break
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleToggleLineBreak();
+        return;
+      }
+
       // Horizontal arrow navigation across beats
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -929,6 +1035,7 @@ export default function App() {
     handleUndo,
     handleRedo,
     handleClearCurrentBeat,
+    handleToggleLineBreak,
     handleTransposeSelected,
     handlePianotasticNoteInput,
     score,
@@ -1008,18 +1115,40 @@ export default function App() {
       />
 
       {/* 2. Main Notation Toolbar */}
-      <MainToolbar
-        toolMode={toolMode}
-        onSetToolMode={setToolMode}
-        selectedDuration={selectedDuration}
-        onSetDuration={setSelectedDuration}
-        isDotted={isDotted}
-        onToggleDotted={() => setIsDotted(!isDotted)}
-        selectedAccidental={selectedAccidental}
-        onSetAccidental={setSelectedAccidental}
-        activeHand={activeHand}
-        onSetHand={setActiveHand}
-      />
+      {(() => {
+        const activeMeasureIdx = score.measures.findIndex((m) => m.id === selection.measureId);
+        const curMeasureNum = activeMeasureIdx >= 0 ? activeMeasureIdx + 1 : 1;
+        const curBeatNum = (selection.beatIndex !== undefined ? selection.beatIndex : 0) + 1;
+        const curSubBeatNum = (selection.subBeatIndex !== undefined ? selection.subBeatIndex : 0) + 1;
+        const curBeatVal = getEffectiveBeatValue(
+          score,
+          Math.max(0, activeMeasureIdx),
+          selection.beatIndex !== undefined ? selection.beatIndex : 0
+        );
+        const positionText = `Bar ${curMeasureNum} • Beat ${curBeatNum}${
+          curBeatVal > 1 ? ` [${curSubBeatNum}/${curBeatVal}]` : ''
+        } • Value ${curBeatVal}`;
+
+        return (
+          <MainToolbar
+            toolMode={toolMode}
+            onSetToolMode={setToolMode}
+            selectedDuration={selectedDuration}
+            onSetDuration={setSelectedDuration}
+            isDotted={isDotted}
+            onToggleDotted={() => setIsDotted(!isDotted)}
+            selectedAccidental={selectedAccidental}
+            onSetAccidental={setSelectedAccidental}
+            activeHand={activeHand}
+            onSetHand={setActiveHand}
+            currentBeatValue={curBeatVal}
+            onChangeBeatValue={handleChangeBeatValue}
+            activePositionText={positionText}
+            isInspectorOpen={isInspectorOpen}
+            onToggleInspector={() => setIsInspectorOpen((prev) => !prev)}
+          />
+        );
+      })()}
 
       {/* Central Workspace: Left Palette + Score Canvas + Right Inspector */}
       <div className="flex flex-1 overflow-hidden relative">
@@ -1030,7 +1159,10 @@ export default function App() {
         />
 
         {/* 4. Central Score Canvas (Custom Pianotastic Notation) */}
-        <div className="flex-1 h-full overflow-hidden flex flex-col bg-stone-200/50">
+        <div
+          id="score-viewport-container"
+          className="flex-1 h-full overflow-y-auto overflow-x-auto flex flex-col bg-stone-200/50 relative scroll-smooth"
+        >
           <NotationRenderer
             score={score}
             toolMode={toolMode}
@@ -1042,17 +1174,19 @@ export default function App() {
             onSelectMeasure={(measureId) =>
               setSelection((sel) => ({ ...sel, measureId, eventId: null }))
             }
-            onSelectBeat={(measureId, beatIndex, subBeatIndex) =>
+            onSelectBeat={(measureId, beatIndex, subBeatIndex, selectionType) =>
               setSelection((sel) => ({
                 ...sel,
                 measureId,
                 beatIndex,
                 subBeatIndex: subBeatIndex ?? 0,
+                selectionType: selectionType || 'beat',
                 eventId: null,
               }))
             }
             onUpdateBeatLyric={handleUpdateBeatLyric}
             onUpdateBeatChord={handleUpdateBeatChord}
+            onToggleBeatSymbol={handleToggleBeatSymbol}
             onInsertNote={handleInsertNote}
             onDeleteSelected={handleDeleteSelected}
             onMeasureWidthChange={handleMeasureWidthChange}
@@ -1062,25 +1196,40 @@ export default function App() {
             onOpenNavigationPalette={(measure) =>
               setNavigationModalMeasure(measure)
             }
+            onToggleLineBreak={handleToggleLineBreak}
           />
         </div>
 
-        {/* Dedicated Pianotastic Beat Value & Bars Per Line Palette */}
-        <BeatValueBar
-          score={score}
-          selection={selection}
-          onChangeBeatValue={handleChangeBeatValue}
-          onChangeBarsPerLine={handleChangeBarsPerLine}
-        />
-
-        {/* 5. Right-side Properties Panel */}
+        {/* 5. Right-side Collapsible Contextual Properties Inspector */}
         <PropertiesPanel
+          isOpen={isInspectorOpen}
+          onClose={() => setIsInspectorOpen(false)}
           score={score}
           selection={selection}
+          activeHand={activeHand}
+          currentBeatValue={getEffectiveBeatValue(
+            score,
+            Math.max(0, score.measures.findIndex((m) => m.id === (selection.measureId || score.measures[0]?.id))),
+            selection.beatIndex !== undefined ? selection.beatIndex : 0
+          )}
+          onChangeBeatValue={handleChangeBeatValue}
+          onUpdateBeatChord={handleUpdateBeatChord}
+          onUpdateBeatLyric={handleUpdateBeatLyric}
+          onToggleBeatSymbol={handleToggleBeatSymbol}
+          onClearCurrentBeat={handleClearCurrentBeat}
+          onTransposeSelected={handleTransposeSelected}
+          onToggleLineBreak={handleToggleLineBreak}
+          onSelectBeat={(mId, bIdx, subIdx) =>
+            setSelection((sel) => ({
+              ...sel,
+              measureId: mId,
+              beatIndex: bIdx,
+              subBeatIndex: subIdx ?? 0,
+            }))
+          }
           onUpdateScoreMetadata={handleUpdateMetadata}
           onUpdateLayout={handleUpdateLayout}
           onUpdateMeasure={handleUpdateMeasure}
-          onUpdateEvent={handleUpdateEvent}
           onAddMeasure={handleAddMeasure}
           onInsertMeasureBefore={handleInsertMeasureBefore}
           onInsertMeasureAfter={handleInsertMeasureAfter}
@@ -1139,20 +1288,8 @@ export default function App() {
         onClose={() => setIsChordDialogOpen(false)}
         onInsertChord={(chord) => {
           if (!selection.measureId) return;
-          const targetMeasure = score.measures.find((m) => m.id === selection.measureId);
-          if (!targetMeasure) return;
-
-          const newChordSymbols = [...targetMeasure.chordSymbols];
-          newChordSymbols.push({
-            id: `cs_${Date.now()}`,
-            beatOffset: 0,
-            root: chord.root,
-            quality: chord.quality,
-            bass: chord.bass,
-            formatted: chord.formatted,
-          });
-
-          handleUpdateMeasure(selection.measureId, { chordSymbols: newChordSymbols });
+          const currentBeat = selection.beatIndex !== undefined ? selection.beatIndex : 0;
+          handleUpdateBeatChord(selection.measureId, currentBeat, chord.formatted);
         }}
       />
 
@@ -1202,7 +1339,15 @@ export default function App() {
           onClear={handleClearMeasure}
           onResetWidth={(mId) => handleMeasureWidthChange(mId, undefined as any)}
           onOpenNavigation={(measure) => setNavigationModalMeasure(measure)}
+          onToggleLineBreak={handleToggleLineBreak}
         />
+      )}
+
+      {/* Floating Layout / Action Toast Notification */}
+      {appToast && (
+        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 bg-stone-900/95 text-white px-4 py-2 rounded-full shadow-lg border border-stone-700 text-xs font-medium backdrop-blur-xs flex items-center space-x-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <span>{appToast}</span>
+        </div>
       )}
 
       {/* New Page Template Setup Modal */}

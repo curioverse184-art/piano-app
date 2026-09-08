@@ -14,7 +14,7 @@ import {
  * Format a Pitch into clean letter notation matching the custom Pianotastic format.
  * Examples: "C", "D#", "Eb", "F#", "G", "Ab", "B"
  */
-export function formatNoteLetter(pitch: Pitch): string {
+export function formatNoteLetter(pitch: Pitch | null | undefined): string {
   if (!pitch || !pitch.step) return '—';
   let acc = '';
   if (pitch.accidental === 'sharp') acc = '#';
@@ -22,6 +22,32 @@ export function formatNoteLetter(pitch: Pitch): string {
   else if (pitch.accidental === 'double_sharp') acc = '##';
   else if (pitch.accidental === 'double_flat') acc = 'bb';
   return `${pitch.step}${acc}`;
+}
+
+/**
+ * Categorize pitch octave:
+ * - Low octave (octave <= 3): Dot below
+ * - Middle octave (octave === 4): Reference, no dot
+ * - High octave (octave >= 5): Dot above
+ */
+export function getOctaveType(pitch: Pitch | null | undefined): 'low' | 'middle' | 'high' {
+  if (!pitch || typeof pitch.octave !== 'number') return 'middle';
+  if (pitch.octave <= 3) return 'low';
+  if (pitch.octave >= 5) return 'high';
+  return 'middle';
+}
+
+export function hasOctaveDotBelow(pitch: Pitch | null | undefined): boolean {
+  return !!pitch && typeof pitch.octave === 'number' && pitch.octave <= 3;
+}
+
+export function hasOctaveDotAbove(pitch: Pitch | null | undefined): boolean {
+  return !!pitch && typeof pitch.octave === 'number' && pitch.octave >= 5;
+}
+
+export function formatSubdivisionDisplay(pitch: Pitch | null | undefined): string {
+  if (!pitch || !pitch.step) return '.';
+  return formatNoteLetter(pitch);
 }
 
 /**
@@ -109,8 +135,8 @@ export function getMeasureBeatPitches(
   measure: Measure,
   totalBeats: number,
   handTemplate: HandTemplate = 'Both'
-): Pitch[][] {
-  const result: Pitch[][] = [];
+): (Pitch | null)[][] {
+  const result: (Pitch | null)[][] = [];
 
   // 1. If explicit beatNotes exists, return it
   if (measure.beatNotes && Object.keys(measure.beatNotes).length > 0) {
@@ -122,7 +148,7 @@ export function getMeasureBeatPitches(
 
   // 2. Otherwise derive from rhEvents (or lhEvents if LH-only)
   const events = handTemplate === 'LH' ? measure.lhEvents : measure.rhEvents;
-  const beatBuckets: Pitch[][] = Array.from({ length: totalBeats }, () => []);
+  const beatBuckets: (Pitch | null)[][] = Array.from({ length: totalBeats }, () => []);
 
   if (events && events.length > 0) {
     let currentBeatAcc = 0;
@@ -169,8 +195,8 @@ export function syncMeasureEventsFromBeatData(
 
   for (let b = 0; b < totalBeats; b++) {
     const pitches = measure.beatNotes?.[b] || [];
-    const lyric = measure.beatLyrics?.[b];
-    const value = measure.beatValues?.[b] || 1;
+    const beatLyric = measure.beatLyrics?.[b];
+    const value = measure.beatValues?.[b] || Math.max(1, pitches.length);
 
     if (pitches.length === 0) {
       // Empty beat: insert rest
@@ -180,7 +206,7 @@ export function syncMeasureEventsFromBeatData(
           type: 'rest',
           pitches: [],
           duration: 'quarter',
-          lyricSyllable: lyric,
+          lyricSyllable: beatLyric,
         });
       }
       if (handTemplate !== 'RH') {
@@ -192,35 +218,86 @@ export function syncMeasureEventsFromBeatData(
         });
       }
     } else {
-      // Notes entered: create NoteEvents according to note count / value
+      // Notes / Subdivisions entered: determine subdivision duration
+      const effectiveSlots = Math.max(pitches.length, value);
       const duration: NoteDuration =
-        pitches.length === 1 ? 'quarter' : pitches.length === 2 ? 'eighth' : 'sixteenth';
+        effectiveSlots === 1 ? 'quarter' : effectiveSlots === 2 ? 'eighth' : 'sixteenth';
 
-      pitches.forEach((p, pIdx) => {
-        const evId = `rh_${measure.id}_b${b}_n${pIdx}_${now}`;
-        if (handTemplate !== 'LH') {
-          rhEvents.push({
-            id: evId,
-            type: 'note',
-            pitches: [p],
-            duration,
-            lyricSyllable: pIdx === 0 ? lyric : undefined,
-          });
+      for (let pIdx = 0; pIdx < effectiveSlots; pIdx++) {
+        const p = pitches[pIdx] ?? null;
+        const evId = `rh_${measure.id}_b${b}_s${pIdx}_${now}`;
+        const noteLyric = measure.beatLyrics?.[`${b}_${pIdx}`] || (pIdx === 0 ? beatLyric : undefined);
+
+        if (!p || !p.step) {
+          // Empty subdivision (e.g. '. B' slot 0 is null): silent rest!
+          if (handTemplate !== 'LH') {
+            rhEvents.push({
+              id: `${evId}_rest`,
+              type: 'rest',
+              pitches: [],
+              duration,
+            });
+          }
+          if (handTemplate !== 'RH') {
+            lhEvents.push({
+              id: `lh_${measure.id}_b${b}_s${pIdx}_${now}_rest`,
+              type: 'rest',
+              pitches: [],
+              duration,
+            });
+          }
+        } else {
+          // Real note at this subdivision
+          if (handTemplate !== 'LH') {
+            rhEvents.push({
+              id: evId,
+              type: 'note',
+              pitches: [p],
+              duration,
+              lyricSyllable: noteLyric,
+            });
+          }
+          if (handTemplate !== 'RH') {
+            lhEvents.push({
+              id: `lh_${measure.id}_b${b}_s${pIdx}_${now}`,
+              type: 'note',
+              pitches: [{ ...p, octave: Math.max(1, p.octave - 1) }], // lh accompaniment
+              duration,
+            });
+          }
         }
-        if (handTemplate !== 'RH') {
-          lhEvents.push({
-            id: `lh_${measure.id}_b${b}_n${pIdx}_${now}`,
-            type: 'note',
-            pitches: [{ ...p, octave: Math.max(1, p.octave - 1) }], // lh accompaniment an octave lower
-            duration,
-          });
-        }
-      });
+      }
+    }
+  }
+
+  // Keep chordSymbols in sync with beatChords
+  const chordSymbols = [...(measure.chordSymbols || [])];
+  if (measure.beatChords) {
+    // Rebuild or update chordSymbols from beatChords
+    const updatedChords: typeof chordSymbols = [];
+    for (const [beatKey, chordName] of Object.entries(measure.beatChords)) {
+      const bIdx = Number(beatKey);
+      if (chordName && chordName.trim()) {
+        const root = chordName.slice(0, 1).toUpperCase();
+        const quality = chordName.slice(1);
+        updatedChords.push({
+          id: `cs_${measure.id}_b${bIdx}`,
+          beatOffset: bIdx,
+          root,
+          quality,
+          formatted: chordName.trim(),
+        });
+      }
+    }
+    if (updatedChords.length > 0 || Object.keys(measure.beatChords).length > 0) {
+      chordSymbols.length = 0;
+      chordSymbols.push(...updatedChords);
     }
   }
 
   return {
     ...measure,
+    chordSymbols,
     rhEvents: handTemplate === 'LH' ? [] : rhEvents,
     lhEvents: handTemplate === 'RH' ? [] : lhEvents,
   };

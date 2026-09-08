@@ -24,6 +24,8 @@ interface BottomPlaybackBarProps {
   onToggleVirtualPiano: () => void;
   playbackPosition: { measureIndex: number; beat: number } | null;
   onOpenMidiModal?: () => void;
+  activeOctave?: 'low' | 'middle' | 'high';
+  onSetOctave?: (octave: 'low' | 'middle' | 'high') => void;
 }
 
 export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
@@ -33,6 +35,8 @@ export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
   onToggleVirtualPiano,
   playbackPosition,
   onOpenMidiModal,
+  activeOctave = 'middle',
+  onSetOctave,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [metronomeOn, setMetronomeOn] = useState(audioEngine.getMetronome());
@@ -275,6 +279,59 @@ export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
             </label>
           </div>
         )}
+      </div>
+
+      {/* 12. Compact OCTAVE Selection Control (OCTAVE LOW | MIDDLE | HIGH) */}
+      <div
+        id="octave-control-container"
+        className="flex items-center space-x-1 bg-stone-100/90 border border-stone-200 rounded-lg px-2.5 py-1 text-xs select-none shadow-2xs"
+      >
+        <span className="text-[10px] font-black tracking-wider text-stone-600 uppercase mr-1">
+          OCTAVE
+        </span>
+        <div className="flex items-center space-x-1 font-bold">
+          <button
+            id="octave-btn-low"
+            type="button"
+            onClick={() => onSetOctave?.('low')}
+            title="Low Octave (dot below note)"
+            className={`px-2 py-0.5 rounded text-xs transition-all ${
+              activeOctave === 'low'
+                ? 'bg-amber-600 text-white shadow-2xs'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200'
+            }`}
+          >
+            LOW
+          </button>
+          <span className="text-stone-300">|</span>
+          <button
+            id="octave-btn-middle"
+            type="button"
+            onClick={() => onSetOctave?.('middle')}
+            title="Middle Octave (standard reference, no dot)"
+            className={`px-2 py-0.5 rounded text-xs transition-all ${
+              activeOctave === 'middle'
+                ? 'bg-amber-600 text-white shadow-2xs'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200'
+            }`}
+          >
+            MIDDLE
+          </button>
+          <span className="text-stone-300">|</span>
+          <button
+            id="octave-btn-high"
+            type="button"
+            onClick={() => onSetOctave?.('high')}
+            title="High Octave (dot above note)"
+            className={`px-2 py-0.5 rounded text-xs transition-all ${
+              activeOctave === 'high'
+                ? 'bg-amber-600 text-white shadow-2xs'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200'
+            }`}
+          >
+            HIGH
+          </button>
+        </div>
       </div>
 
       {/* Input Devices: Virtual Piano & Web MIDI */}

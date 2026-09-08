@@ -1,6 +1,7 @@
-import { NoteEvent, Pitch, Measure, Score, TempoBeatUnit } from '../types/score';
+import { NoteEvent, Pitch, Measure, Score, TempoBeatUnit, TimeSignature } from '../types/score';
 import { getMidiNote, midiToFrequency, getEventBeats } from '../utils/musicTheory';
 import { calculatePlaybackRoute, PlaybackStep } from '../utils/navigationEngine';
+import { getEffectiveBeatValue } from '../utils/pianotasticNotation';
 
 class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -100,85 +101,84 @@ class AudioEngine {
    */
   public playTone(freq: number, durationSec = 1.0, velocity = 0.8, timeOffset = 0) {
     try {
+      if (!freq || freq <= 0 || isNaN(freq)) return { stop: () => {} };
       const ctx = this.initContext();
-      const startTime = ctx.currentTime + timeOffset;
+      // Ensure startTime is strictly non-negative and in the future
+      const safeStartTime = Math.max(ctx.currentTime + 0.005, ctx.currentTime + timeOffset);
 
       const masterGain = ctx.createGain();
-      const effectiveGain = this.masterVolume * velocity;
-      masterGain.gain.setValueAtTime(0, startTime);
-      // Fast attack
-      masterGain.gain.linearRampToValueAtTime(0.38 * effectiveGain, startTime + 0.007);
-      // Realistic piano exponential decay
-      masterGain.gain.exponentialRampToValueAtTime(0.14 * effectiveGain, startTime + Math.min(durationSec * 0.35, 0.3));
-      masterGain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSec + 0.18);
+      const effectiveGain = Math.max(0.01, Math.min(1.0, this.masterVolume * velocity * 0.45));
 
-      // Low pass filter to simulate piano soundboard & string warmth
+      // In Web Audio API, exponential ramps cannot start from or ramp to 0!
+      masterGain.gain.setValueAtTime(0.0001, safeStartTime);
+      // Fast piano hammer attack
+      masterGain.gain.linearRampToValueAtTime(effectiveGain, safeStartTime + 0.006);
+      // Natural acoustic piano exponential decay
+      const decayTime = Math.min(durationSec * 0.4, 0.25);
+      masterGain.gain.exponentialRampToValueAtTime(
+        Math.max(0.0001, effectiveGain * 0.42),
+        safeStartTime + 0.006 + decayTime
+      );
+      masterGain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        safeStartTime + durationSec + 0.12
+      );
+
+      // Low pass filter to simulate piano soundboard & acoustic string warmth
       const filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(Math.min(freq * 6, 8500), startTime);
-      filter.frequency.exponentialRampToValueAtTime(Math.min(freq * 2.4, 4200), startTime + durationSec);
+      const initialCutoff = Math.min(Math.max(freq * 5.5, 800), 10000);
+      const endCutoff = Math.min(Math.max(freq * 2.2, 400), 5000);
+      filter.frequency.setValueAtTime(initialCutoff, safeStartTime);
+      filter.frequency.exponentialRampToValueAtTime(endCutoff, safeStartTime + durationSec);
 
-      // Harmonics (Fundamental, 2nd, 3rd, 4th, 5th harmonics)
+      // Harmonics for rich acoustic timbre (Fundamental, 2nd, 3rd, 4th harmonics)
       const harmonics = [
-        { mult: 1, gain: 1.0 },
-        { mult: 2, gain: 0.52 },
-        { mult: 3, gain: 0.26 },
-        { mult: 4, gain: 0.14 },
-        { mult: 5, gain: 0.07 },
+        { mult: 1, gain: 1.0, type: 'triangle' as OscillatorType },
+        { mult: 2, gain: 0.48, type: 'sine' as OscillatorType },
+        { mult: 3, gain: 0.22, type: 'sine' as OscillatorType },
+        { mult: 4, gain: 0.10, type: 'sine' as OscillatorType },
       ];
 
       const oscs: OscillatorNode[] = [];
       harmonics.forEach((h) => {
         const osc = ctx.createOscillator();
-        osc.type = h.mult === 1 ? 'triangle' : 'sine';
-        osc.frequency.setValueAtTime(freq * h.mult, startTime);
+        osc.type = h.type;
+        osc.frequency.setValueAtTime(freq * h.mult, safeStartTime);
 
         const hGain = ctx.createGain();
-        hGain.gain.setValueAtTime(h.gain, startTime);
+        hGain.gain.setValueAtTime(h.gain, safeStartTime);
 
         osc.connect(hGain);
         hGain.connect(filter);
         oscs.push(osc);
       });
 
-      // Subtle hammer noise transient (percussive click of piano hammer hitting string)
-      const bufferSize = Math.floor(ctx.sampleRate * 0.022); // 22ms
-      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.005));
-      }
-      const noise = ctx.createBufferSource();
-      noise.buffer = buffer;
-      const noiseFilter = ctx.createBiquadFilter();
-      noiseFilter.type = 'bandpass';
-      noiseFilter.frequency.setValueAtTime(Math.min(freq * 1.5, 4500), startTime);
-      noiseFilter.Q.setValueAtTime(2.2, startTime);
-      const noiseGain = ctx.createGain();
-      noiseGain.gain.setValueAtTime(0.045 * effectiveGain, startTime);
-      noise.connect(noiseFilter);
-      noiseFilter.connect(masterGain);
-
       filter.connect(masterGain);
       masterGain.connect(ctx.destination);
 
       oscs.forEach((osc) => {
-        osc.start(startTime);
-        osc.stop(startTime + durationSec + 0.22);
+        osc.start(safeStartTime);
+        osc.stop(safeStartTime + durationSec + 0.15);
       });
-      noise.start(startTime);
-      noise.stop(startTime + 0.025);
 
       return {
         stop: () => {
           try {
-            masterGain.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.04);
+            masterGain.gain.cancelScheduledValues(ctx.currentTime);
+            masterGain.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.03);
+            setTimeout(() => {
+              oscs.forEach((o) => {
+                try { o.stop(); } catch {}
+              });
+            }, 40);
           } catch {
             // ignore
           }
         },
       };
-    } catch {
+    } catch (err) {
+      console.warn('Audio playTone error:', err);
       return { stop: () => {} };
     }
   }
@@ -236,8 +236,15 @@ class AudioEngine {
    * Start playback of score from specific measure index or from beginning,
    * fully evaluating the navigation route (repeats, voltas, D.C., D.S., Coda, Fine).
    */
-  public playScore(score: Score, startMeasureIndex = 0) {
-    this.initContext();
+  public async playScore(score: Score, startMeasureIndex = 0) {
+    const ctx = this.initContext();
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch (err) {
+        console.warn('AudioContext resume error:', err);
+      }
+    }
     this.stopPlayback();
     this.currentScore = score;
 
@@ -309,9 +316,20 @@ class AudioEngine {
       }
     }
 
-    // Schedule RH & LH audio events
-    this.scheduleStaffEvents(measure.rhEvents, keySig, quarterNoteSec);
-    this.scheduleStaffEvents(measure.lhEvents, keySig, quarterNoteSec);
+    // Schedule audio events: check if measure has explicit beatNotes
+    const hasBeatNotes =
+      measure.beatNotes &&
+      Object.values(measure.beatNotes).some(
+        (arr) => arr && arr.some((p) => p !== null && p !== undefined && p.step)
+      );
+
+    if (hasBeatNotes) {
+      this.schedulePianotasticBeatNotes(measure, keySig, quarterNoteSec, ts, currentStep.measureIndex);
+    } else {
+      // Fallback for legacy staff events
+      this.scheduleStaffEvents(measure.rhEvents, keySig, quarterNoteSec);
+      this.scheduleStaffEvents(measure.lhEvents, keySig, quarterNoteSec);
+    }
 
     // Stop if this step is "Fine"
     if (currentStep.isFine) {
@@ -328,6 +346,63 @@ class AudioEngine {
         this.runPlaybackLoop();
       }
     }, measureDurationSec * 1000);
+  }
+
+  /**
+   * Schedule audio directly from Pianotastic beatNotes and beatValues.
+   * Handles subdivisions with absolute precision:
+   * - If Value = 2 with ". B", slot 0 is silent, and B plays precisely on slot 1.
+   * - Respects exact stored octave (Low C = 48, Middle C = 60, High C = 72).
+   * - Respects pickup beats in Measure 1.
+   */
+  private schedulePianotasticBeatNotes(
+    measure: Measure,
+    keySig: string,
+    quarterNoteSec: number,
+    ts: TimeSignature,
+    measureIndex: number
+  ) {
+    const pickupBeat = this.currentScore?.metadata?.pickupBeat || 1;
+    const isFirstMeasure = measure.measureNumber === 1 || measureIndex === 0;
+    const lockedBeforeBeat = isFirstMeasure && pickupBeat > 1 ? pickupBeat - 1 : 0;
+    const totalBeats = ts.numerator;
+    const beatDurationSec = (4 / ts.denominator) * quarterNoteSec;
+
+    for (let b = 0; b < totalBeats; b++) {
+      if (isFirstMeasure && b < lockedBeforeBeat) {
+        continue; // Locked pickup beat remains silent
+      }
+
+      const effVal =
+        measure.beatValues?.[b] ||
+        (this.currentScore ? getEffectiveBeatValue(this.currentScore, measureIndex, b) : 1);
+
+      const subDurationSec = beatDurationSec / effVal;
+      const beatOffsetSec = b * beatDurationSec;
+      const pitches = measure.beatNotes?.[b] || [];
+
+      for (let s = 0; s < effVal; s++) {
+        const pitch = pitches[s] ?? null;
+        if (pitch && pitch.step) {
+          const timeOffsetSec = beatOffsetSec + s * subDurationSec;
+          const noteDurationSec = Math.max(0.08, subDurationSec * 0.90);
+          const midi = getMidiNote(pitch, keySig);
+          const freq = midiToFrequency(midi);
+          const handle = this.playTone(freq, noteDurationSec, 0.85, timeOffsetSec);
+          if (handle) {
+            this.scheduledEvents.push(handle);
+          }
+
+          // Subtle left-hand accompaniment an octave lower
+          const lhMidi = Math.max(21, midi - 12);
+          const lhHandle = this.playTone(midiToFrequency(lhMidi), noteDurationSec, 0.35, timeOffsetSec);
+          if (lhHandle) {
+            this.scheduledEvents.push(lhHandle);
+          }
+        }
+        // If pitch is null or empty: complete silence on this subdivision slot!
+      }
+    }
   }
 
   private scheduleStaffEvents(events: NoteEvent[], keySig: string, quarterNoteSec: number) {
