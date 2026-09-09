@@ -350,16 +350,12 @@ export default function App() {
         type: 'note',
         pitches: [],
         duration: 'quarter',
-        beatValue: 1,
-        subdivisionPitches: [[]],
       }));
       const lhEvents: NoteEvent[] = Array.from({ length: beatsCount }, (_, i) => ({
         id: `lh_${Date.now()}_${i}`,
         type: 'note',
         pitches: [],
         duration: 'quarter',
-        beatValue: 1,
-        subdivisionPitches: [[]],
       }));
 
       const newMeasure: Measure = {
@@ -404,16 +400,12 @@ export default function App() {
                 type: 'note',
                 pitches: [],
                 duration: 'quarter',
-                beatValue: 1,
-                subdivisionPitches: [[]],
               });
               newLh.push({
                 id: `lh_${Date.now()}_${b}`,
                 type: 'note',
                 pitches: [],
                 duration: 'quarter',
-                beatValue: 1,
-                subdivisionPitches: [[]],
               });
             }
           } else if (newNumerator < oldNumerator) {

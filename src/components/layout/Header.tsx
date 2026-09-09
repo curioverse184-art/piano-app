@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Score, ToolMode, LearningLayerSettings } from '../../types/score';
+import { Score, ToolMode, LearningLayerSettings, TimeSignature } from '../../types/score';
 import {
   Undo2,
   Redo2,
