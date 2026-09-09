@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Score,
   Measure,
@@ -12,6 +12,7 @@ import {
   NavigationTarget,
   VoltaEnding,
   ScoreTextAnnotation,
+  Volta,
 } from '../../types/score';
 import { KEY_SIGNATURES } from '../../utils/musicTheory';
 import {
@@ -19,6 +20,7 @@ import {
   getMeasureTotalBeats,
   isBeatLockedByPickup,
   formatNoteLetter,
+  getNormalizedVoltas,
 } from '../../utils/pianotasticNotation';
 import {
   Sliders,
@@ -42,6 +44,7 @@ import {
   ArrowDown,
   Lock,
   CornerDownLeft,
+  Bookmark,
 } from 'lucide-react';
 
 interface PropertiesPanelProps {
@@ -58,6 +61,10 @@ interface PropertiesPanelProps {
   onClearCurrentBeat?: () => void;
   onTransposeSelected?: (semitones: number) => void;
   onSelectBeat?: (measureId: string, beatIndex: number, subBeatIndex?: number) => void;
+  onSelectVolta?: (voltaId: string) => void;
+  onAddVolta?: (startMeasureId: string, endMeasureId: string, endings: number[], text?: string) => void;
+  onUpdateVolta?: (voltaId: string, patch: Partial<Volta>) => void;
+  onDeleteVolta?: (voltaId: string) => void;
   onUpdateScoreMetadata: (patch: Partial<Score['metadata']>) => void;
   onUpdateLayout: (patch: Partial<Score['layoutSettings']>) => void;
   onUpdateMeasure: (measureId: string, patch: Partial<Measure>) => void;
@@ -97,6 +104,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onClearCurrentBeat,
   onTransposeSelected,
   onSelectBeat,
+  onSelectVolta,
+  onAddVolta,
+  onUpdateVolta,
+  onDeleteVolta,
   onUpdateScoreMetadata,
   onUpdateLayout,
   onUpdateMeasure,
@@ -130,6 +141,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       t.id === selection.textAnnotationId ||
       (selection.selectionType === 'text' && t.id === selection.eventId)
   );
+
+  // Normalized Voltas and active volta selection
+  const voltas = useMemo(() => getNormalizedVoltas(score), [score]);
+  const selectedVolta = voltas.find(
+    (v) =>
+      v.id === selection.voltaId ||
+      (selection.selectionType === 'volta' && v.id === (selection as any).voltaId)
+  );
+  const activeMeasureVolta = activeMeasure
+    ? voltas.find((v) => {
+        const sIdx = score.measures.findIndex((m) => m.id === v.startMeasureId);
+        const eIdx = score.measures.findIndex((m) => m.id === v.endMeasureId);
+        const safeEIdx = eIdx === -1 ? sIdx : Math.max(sIdx, eIdx);
+        return measureIdx >= sIdx && measureIdx <= safeEIdx;
+      })
+    : undefined;
 
   const totalBeats = activeMeasure
     ? getMeasureTotalBeats(activeMeasure, score.metadata.initialTimeSignature)
@@ -444,6 +471,113 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                       ↓
                     </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Selected Volta Ending Bracket Controls */}
+            {selectedVolta && (
+              <div className="bg-amber-50/90 rounded-lg p-2.5 border border-amber-300 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5">
+                    <Bookmark className="w-3.5 h-3.5 text-amber-700" />
+                    <span className="font-bold text-amber-900 text-[11px] uppercase tracking-wide">
+                      Selected Volta Ending ({selectedVolta.text || (selectedVolta.endingNumbers.join(', ') + '.')})
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => onDeleteVolta?.(selectedVolta.id)}
+                    className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                    title="Delete this Volta ending"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Ending numbers selector */}
+                <div>
+                  <label className="text-[10px] font-bold text-stone-600 block mb-1">Ending Pass</label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[
+                      { label: '1st', nums: [1], text: '1.' },
+                      { label: '2nd', nums: [2], text: '2.' },
+                      { label: '3rd', nums: [3], text: '3.' },
+                      { label: '1, 2.', nums: [1, 2], text: '1, 2.' },
+                    ].map((opt) => {
+                      const isActive =
+                        selectedVolta.endingNumbers.length === opt.nums.length &&
+                        selectedVolta.endingNumbers.every((n, i) => n === opt.nums[i]);
+                      return (
+                        <button
+                          key={opt.label}
+                          onClick={() =>
+                            onUpdateVolta?.(selectedVolta.id, {
+                              endingNumbers: opt.nums,
+                              text: opt.text,
+                            })
+                          }
+                          className={`py-1 rounded text-xs font-bold border transition-colors ${
+                            isActive
+                              ? 'bg-amber-600 text-white border-amber-600'
+                              : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Spanning: Start & End Bars */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-600 block mb-1">Start Bar</label>
+                    <select
+                      value={selectedVolta.startMeasureId}
+                      onChange={(e) =>
+                        onUpdateVolta?.(selectedVolta.id, { startMeasureId: e.target.value })
+                      }
+                      className="w-full bg-white border border-stone-300 rounded px-2 py-1 text-xs font-medium text-stone-800"
+                    >
+                      {score.measures.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          Bar {m.measureNumber}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-stone-600 block mb-1">End Bar</label>
+                    <select
+                      value={selectedVolta.endMeasureId}
+                      onChange={(e) =>
+                        onUpdateVolta?.(selectedVolta.id, { endMeasureId: e.target.value })
+                      }
+                      className="w-full bg-white border border-stone-300 rounded px-2 py-1 text-xs font-medium text-stone-800"
+                    >
+                      {score.measures.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          Bar {m.measureNumber}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Closed hook toggle */}
+                <div className="flex items-center justify-between pt-1">
+                  <label className="flex items-center space-x-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedVolta.closedEnd !== false}
+                      onChange={(e) =>
+                        onUpdateVolta?.(selectedVolta.id, { closedEnd: e.target.checked })
+                      }
+                      className="rounded border-stone-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-[11px] font-medium text-stone-700">Right Hook (Closed Bracket)</span>
+                  </label>
                 </div>
               </div>
             )}
@@ -900,31 +1034,119 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 </div>
               )}
 
-              {/* Volta Endings (1st, 2nd, 3rd) */}
-              <div className="mb-3">
-                <label className="text-[10px] text-stone-500 uppercase font-bold block mb-1">
-                  Volta Ending Brackets
-                </label>
-                <div className="grid grid-cols-4 gap-1">
-                  {([undefined, 1, 2, 3] as (VoltaEnding | undefined)[]).map((v) => (
+              {/* Volta Ending Brackets */}
+              <div className="mb-3 bg-stone-50 p-2 rounded-lg border border-stone-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] text-stone-500 uppercase font-bold block">
+                    Volta Ending Brackets
+                  </label>
+                  {activeMeasureVolta && (
                     <button
-                      key={v ?? 'none'}
-                      id={`volta-${v ?? 'none'}`}
-                      onClick={() => {
-                        if (activeMeasure) {
-                          onUpdateMeasure(activeMeasure.id, { voltaEnding: v });
-                        }
-                      }}
-                      className={`py-1 rounded font-semibold text-xs transition-colors ${
-                        activeMeasure?.voltaEnding === v
-                          ? 'bg-stone-900 text-white'
-                          : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
-                      }`}
+                      onClick={() => onDeleteVolta?.(activeMeasureVolta.id)}
+                      className="text-[10px] text-red-600 hover:text-red-800 font-semibold"
                     >
-                      {v ? `${v}st Ending` : 'None'}
+                      Remove
                     </button>
-                  ))}
+                  )}
                 </div>
+
+                <div className="grid grid-cols-4 gap-1 mb-2">
+                  {[
+                    { label: 'None', ending: undefined },
+                    { label: '1st', ending: 1 },
+                    { label: '2nd', ending: 2 },
+                    { label: '3rd', ending: 3 },
+                  ].map(({ label, ending }) => {
+                    const isSelected = activeMeasureVolta
+                      ? activeMeasureVolta.endingNumbers.includes(ending as number)
+                      : activeMeasure?.voltaEnding === ending;
+                    return (
+                      <button
+                        key={label}
+                        id={`volta-${ending ?? 'none'}`}
+                        onClick={() => {
+                          if (!activeMeasure) return;
+                          if (ending === undefined) {
+                            if (activeMeasureVolta) {
+                              onDeleteVolta?.(activeMeasureVolta.id);
+                            } else {
+                              onUpdateMeasure(activeMeasure.id, { voltaEnding: undefined });
+                            }
+                          } else {
+                            if (activeMeasureVolta) {
+                              onUpdateVolta?.(activeMeasureVolta.id, {
+                                endingNumbers: [ending as number],
+                                text: `${ending}.`,
+                              });
+                            } else if (onAddVolta) {
+                              onAddVolta(activeMeasure.id, activeMeasure.id, [ending as number], `${ending}.`);
+                            } else {
+                              onUpdateMeasure(activeMeasure.id, { voltaEnding: ending as VoltaEnding });
+                            }
+                          }
+                        }}
+                        className={`py-1 rounded font-semibold text-xs transition-colors ${
+                          isSelected
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-white border border-stone-200 text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {activeMeasureVolta && (
+                  <div className="pt-2 border-t border-stone-200/80 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[9.5px] font-bold text-stone-500 block mb-0.5">Start Bar</span>
+                        <select
+                          value={activeMeasureVolta.startMeasureId}
+                          onChange={(e) =>
+                            onUpdateVolta?.(activeMeasureVolta.id, { startMeasureId: e.target.value })
+                          }
+                          className="w-full bg-white border border-stone-300 rounded px-1.5 py-0.5 text-xs text-stone-800"
+                        >
+                          {score.measures.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              Bar {m.measureNumber}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <span className="text-[9.5px] font-bold text-stone-500 block mb-0.5">End Bar</span>
+                        <select
+                          value={activeMeasureVolta.endMeasureId}
+                          onChange={(e) =>
+                            onUpdateVolta?.(activeMeasureVolta.id, { endMeasureId: e.target.value })
+                          }
+                          className="w-full bg-white border border-stone-300 rounded px-1.5 py-0.5 text-xs text-stone-800"
+                        >
+                          {score.measures.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              Bar {m.measureNumber}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <label className="flex items-center space-x-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={activeMeasureVolta.closedEnd !== false}
+                        onChange={(e) =>
+                          onUpdateVolta?.(activeMeasureVolta.id, { closedEnd: e.target.checked })
+                        }
+                        className="rounded border-stone-300 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span className="text-[10px] font-medium text-stone-700">Right Downward Hook</span>
+                    </label>
+                  </div>
+                )}
               </div>
 
               {/* Navigation Target Markers */}

@@ -15,6 +15,7 @@ import {
   DEFAULT_LEARNING_LAYER,
   SavedProject,
   ScoreTextAnnotation,
+  Volta,
 } from './types/score';
 import { SAMPLE_SCORES } from './data/sampleScores';
 import { audioEngine } from './services/audioEngine';
@@ -28,6 +29,8 @@ import {
   getEffectiveBeatValue,
   calculateNextCursorPosition,
   syncMeasureEventsFromBeatData,
+  getNormalizedVoltas,
+  syncMeasuresVoltaEndings,
 } from './utils/pianotasticNotation';
 
 // Components
@@ -54,6 +57,7 @@ import { SaveAsModal } from './components/modals/SaveAsModal';
 import { ProjectLibraryModal } from './components/modals/ProjectLibraryModal';
 import { TextAnnotationModal } from './components/modals/TextAnnotationModal';
 import { UnsavedChangesModal } from './components/modals/UnsavedChangesModal';
+import { SaveProjectModal } from './components/modals/SaveProjectModal';
 
 export default function App() {
   // Navigation & Startup view state: persist across refreshes
@@ -63,6 +67,7 @@ export default function App() {
   });
   const [isNewScoreModalOpen, setIsNewScoreModalOpen] = useState(false);
   const [isSaveAsModalOpen, setIsSaveAsModalOpen] = useState(false);
+  const [isSaveProjectModalOpen, setIsSaveProjectModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [unsavedModalConfig, setUnsavedModalConfig] = useState<{
@@ -261,18 +266,58 @@ export default function App() {
     setViewMode('home');
   }, [score]);
 
-  // Internal Save Project (No download)
+  // Internal Save Project (No download, returns to Home, asks for name if new)
   const handleSaveProject = useCallback(() => {
+    const isNew =
+      !savedProjects.some((p) => p.id === score.id || p.score.id === score.id) ||
+      score.metadata.title === 'Untitled Composition' ||
+      !score.metadata.title.trim();
+
+    if (isNew) {
+      setIsSaveProjectModalOpen(true);
+      return;
+    }
+
     try {
       const updated = ProjectStorageService.saveProject(score);
       setSavedProjects(updated);
       localStorage.setItem('pianotastic_last_active_project_id', score.id);
       setIsDirty(false);
-      showToast(`Saved "${score.metadata.title}" internally`);
+      showToast(`Saved "${score.metadata.title}" successfully!`);
+      audioEngine.stopPlayback();
+      setPlaybackPosition(null);
+      setViewMode('home');
     } catch (err) {
       console.error('Error saving project internally:', err);
     }
-  }, [score, showToast]);
+  }, [score, savedProjects, showToast]);
+
+  const handleSaveNewProject = useCallback(
+    (projectTitle: string) => {
+      try {
+        const finalScore: Score = {
+          ...score,
+          id: score.id.startsWith('proj_') ? score.id : `proj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          metadata: {
+            ...score.metadata,
+            title: projectTitle,
+          },
+        };
+        setScore(finalScore);
+        const updated = ProjectStorageService.saveProject(finalScore);
+        setSavedProjects(updated);
+        localStorage.setItem('pianotastic_last_active_project_id', finalScore.id);
+        setIsDirty(false);
+        showToast(`Saved "${projectTitle}" successfully!`);
+        audioEngine.stopPlayback();
+        setPlaybackPosition(null);
+        setViewMode('home');
+      } catch (err) {
+        console.error('Error saving new project:', err);
+      }
+    },
+    [score, showToast]
+  );
 
   // Prompt-guarded New / Open / Home actions for Unsaved Changes
   const requestNewProject = useCallback(() => {
@@ -315,30 +360,31 @@ export default function App() {
     }
   }, [isDirty, handleNavigateHome]);
 
-  // Internal Save Copy / Save As (No download)
+  // Internal Save Copy / Save As (No download, creates new unique ID, returns to Home)
   const handleSaveCopy = useCallback(
     (newTitle: string) => {
       try {
         const newScore: Score = {
           ...score,
-          id: `proj_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: `proj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
           metadata: {
             ...score.metadata,
             title: newTitle,
           },
         };
-        setScore(newScore);
-        pushScoreState(newScore);
         const updated = ProjectStorageService.saveProject(newScore);
         setSavedProjects(updated);
         localStorage.setItem('pianotastic_last_active_project_id', newScore.id);
         setIsDirty(false);
-        showToast(`Saved copy as "${newTitle}" internally`);
+        showToast(`Saved new project "${newTitle}" successfully!`);
+        audioEngine.stopPlayback();
+        setPlaybackPosition(null);
+        setViewMode('home');
       } catch (err) {
         console.error('Error saving copy internally:', err);
       }
     },
-    [score, pushScoreState, showToast]
+    [score, showToast]
   );
 
   // Add Measure at End handler
@@ -489,11 +535,126 @@ export default function App() {
       const updatedMeasures = prev.measures.map((m) =>
         m.id === measureId ? { ...m, ...patch } : m
       );
-      const updated: Score = { ...prev, measures: updatedMeasures };
+      let updatedVoltas = getNormalizedVoltas(prev);
+      if ('voltaEnding' in patch) {
+        if (!patch.voltaEnding) {
+          updatedVoltas = updatedVoltas.filter((v) => v.startMeasureId !== measureId);
+        } else {
+          const num = patch.voltaEnding;
+          const existing = updatedVoltas.find((v) => v.startMeasureId === measureId);
+          if (existing) {
+            updatedVoltas = updatedVoltas.map((v) =>
+              v.id === existing.id
+                ? { ...v, endingNumbers: [num], text: `${num}.` }
+                : v
+            );
+          } else {
+            updatedVoltas.push({
+              id: `volta-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              type: 'volta',
+              endingNumbers: [num],
+              text: `${num}.`,
+              startMeasureId: measureId,
+              endMeasureId: measureId,
+              closedEnd: true,
+            });
+          }
+        }
+      }
+      const syncedMeasures = syncMeasuresVoltaEndings(updatedMeasures, updatedVoltas);
+      const updated: Score = { ...prev, measures: syncedMeasures, voltas: updatedVoltas };
       pushScoreState(updated);
       return updated;
     });
   }, [pushScoreState]);
+
+  // Select Volta
+  const handleSelectVolta = useCallback((voltaId: string) => {
+    const currentVoltas = getNormalizedVoltas(score);
+    const target = currentVoltas.find((v) => v.id === voltaId);
+    if (target) {
+      setSelection({
+        measureId: target.startMeasureId,
+        staff: 'RH',
+        eventId: null,
+        selectionType: 'volta',
+        voltaId: target.id,
+      });
+    }
+  }, [score]);
+
+  // Add Volta
+  const handleAddVolta = useCallback((startMeasureId: string, endMeasureId: string, endings: number[], text?: string) => {
+    setScore((prev) => {
+      const currentVoltas = getNormalizedVoltas(prev);
+      const newVolta: Volta = {
+        id: `volta-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'volta',
+        endingNumbers: endings,
+        text: text || `${endings.join(', ')}.`,
+        startMeasureId,
+        endMeasureId: endMeasureId || startMeasureId,
+        closedEnd: true,
+      };
+
+      const updatedVoltas = [...currentVoltas, newVolta];
+      const syncedMeasures = syncMeasuresVoltaEndings(prev.measures, updatedVoltas);
+      const updated: Score = {
+        ...prev,
+        voltas: updatedVoltas,
+        measures: syncedMeasures,
+      };
+      pushScoreState(updated);
+      setSelection({
+        measureId: startMeasureId,
+        staff: 'RH',
+        eventId: null,
+        selectionType: 'volta',
+        voltaId: newVolta.id,
+      });
+      showToast(`Added ${newVolta.text} Volta ending`);
+      return updated;
+    });
+  }, [pushScoreState, showToast]);
+
+  // Update Volta
+  const handleUpdateVolta = useCallback((voltaId: string, patch: Partial<Volta>) => {
+    setScore((prev) => {
+      const currentVoltas = getNormalizedVoltas(prev);
+      const updatedVoltas = currentVoltas.map((v) => (v.id === voltaId ? { ...v, ...patch } : v));
+      const syncedMeasures = syncMeasuresVoltaEndings(prev.measures, updatedVoltas);
+      const updated: Score = {
+        ...prev,
+        voltas: updatedVoltas,
+        measures: syncedMeasures,
+      };
+      pushScoreState(updated);
+      showToast('Volta ending updated');
+      return updated;
+    });
+  }, [pushScoreState, showToast]);
+
+  // Delete Volta
+  const handleDeleteVolta = useCallback((voltaId: string) => {
+    setScore((prev) => {
+      const currentVoltas = getNormalizedVoltas(prev);
+      const updatedVoltas = currentVoltas.filter((v) => v.id !== voltaId);
+      const syncedMeasures = syncMeasuresVoltaEndings(prev.measures, updatedVoltas);
+      const updated: Score = {
+        ...prev,
+        voltas: updatedVoltas,
+        measures: syncedMeasures,
+      };
+      pushScoreState(updated);
+      setSelection((sel) => ({
+        ...sel,
+        selectionType: undefined,
+        voltaId: undefined,
+      }));
+      showToast('Volta ending deleted');
+      return updated;
+    });
+  }, [pushScoreState, showToast]);
 
   // Update Event
   const handleUpdateEvent = useCallback((
@@ -1417,8 +1578,12 @@ export default function App() {
     [score.measures]
   );
 
-  // Delete Selected Event (chord, lyric, text annotation, or note/beat)
+  // Delete Selected Event (volta, chord, lyric, text annotation, or note/beat)
   const handleDeleteSelected = useCallback(() => {
+    if (selection.selectionType === 'volta' && selection.voltaId) {
+      handleDeleteVolta(selection.voltaId);
+      return;
+    }
     if (selection.textAnnotationId || selection.selectionType === 'text') {
       const textId = selection.textAnnotationId || (selection.eventId as string);
       if (textId) {
@@ -1585,6 +1750,42 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         handleRedo();
+        return;
+      }
+
+      // File Menu Shortcuts
+      // Save Project (Ctrl+S / Cmd+S)
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleSaveProject();
+        return;
+      }
+
+      // Save As (Ctrl+Shift+S / Cmd+Shift+S)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        setIsSaveAsModalOpen(true);
+        return;
+      }
+
+      // Print (Ctrl+P / Cmd+P)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setViewMode('print');
+        return;
+      }
+
+      // Open Project (Ctrl+O / Cmd+O)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        requestOpenProject();
+        return;
+      }
+
+      // New Project (Ctrl+N / Cmd+N)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        requestNewProject();
         return;
       }
 
@@ -1976,6 +2177,7 @@ export default function App() {
                   eventId: null,
                 }))
               }
+              onSelectVolta={handleSelectVolta}
               onUpdateBeatLyric={handleUpdateBeatLyric}
               onUpdateBeatChord={handleUpdateBeatChord}
               onToggleBeatSymbol={handleToggleBeatSymbol}
@@ -2025,6 +2227,10 @@ export default function App() {
               subBeatIndex: subIdx ?? 0,
             }))
           }
+          onSelectVolta={handleSelectVolta}
+          onAddVolta={handleAddVolta}
+          onUpdateVolta={handleUpdateVolta}
+          onDeleteVolta={handleDeleteVolta}
           onUpdateScoreMetadata={handleUpdateMetadata}
           onUpdateLayout={handleUpdateLayout}
           onUpdateMeasure={handleUpdateMeasure}
@@ -2162,6 +2368,14 @@ export default function App() {
         currentTitle={score.metadata.title}
         onClose={() => setIsSaveAsModalOpen(false)}
         onSaveCopy={handleSaveCopy}
+      />
+
+      {/* Save Project Modal (For new / untitled projects) */}
+      <SaveProjectModal
+        isOpen={isSaveProjectModalOpen}
+        currentTitle={score.metadata.title}
+        onClose={() => setIsSaveProjectModalOpen(false)}
+        onSave={handleSaveNewProject}
       />
 
       {/* Project Library Modal */}

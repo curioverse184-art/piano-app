@@ -10,6 +10,7 @@ import {
   Hand,
   ChordSymbolEvent,
   ScoreTextAnnotation,
+  Volta,
 } from '../../types/score';
 import {
   formatNoteLetter,
@@ -17,9 +18,9 @@ import {
   getMeasureTotalBeats,
   isBeatLockedByPickup,
   getMeasureBeatPitches,
-  hasOctaveDotAbove,
-  hasOctaveDotBelow,
   getEffectiveBeatValue,
+  getNormalizedVoltas,
+  getSuperscriptOctave,
 } from '../../utils/pianotasticNotation';
 import { audioEngine } from '../../services/audioEngine';
 import { Check, Trash2, X } from 'lucide-react';
@@ -40,6 +41,7 @@ interface NotationRendererProps {
     subBeatIndex?: number,
     selectionType?: 'note' | 'beat' | 'chord' | 'lyrics' | 'symbol'
   ) => void;
+  onSelectVolta?: (voltaId: string) => void;
   onInsertNote?: (measureId: string, staff: 'RH' | 'LH', pitch: Pitch, beatOffset?: number) => void;
   onDeleteSelected?: () => void;
   onMeasureWidthChange?: (measureId: string, newWidth: number) => void;
@@ -54,6 +56,8 @@ interface NotationRendererProps {
   onOpenAddTextModal?: (measureId: string, beatIndex: number, placement?: 'above' | 'below') => void;
   onDeleteTextAnnotation?: (textId: string) => void;
   onMoveTextAnnotation?: (textId: string, offsetX: number, offsetY: number) => void;
+  visiblePageIndices?: number[];
+  onPageCountCalculated?: (count: number) => void;
 }
 
 export const NotationRenderer: React.FC<NotationRendererProps> = ({
@@ -63,6 +67,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
   playbackPosition,
   onSelectMeasure,
   onSelectBeat,
+  onSelectVolta,
   onMeasureContextMenu,
   onOpenNavigationPalette,
   onUpdateBeatLyric,
@@ -74,6 +79,8 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
   onOpenAddTextModal,
   onDeleteTextAnnotation,
   onMoveTextAnnotation,
+  visiblePageIndices,
+  onPageCountCalculated,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const isPlaying = Boolean(playbackPosition) || audioEngine.getIsPlaying();
@@ -99,19 +106,36 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
   const [chordInputValue, setChordInputValue] = useState('');
   const [lyricInputValue, setLyricInputValue] = useState('');
 
-  // Authentic A4 paper dimensions (210mm x 297mm at standard 96 DPI):
-  // 210 mm = 794 px, 297 mm = 1123 px
+  // Paper dimensions at standard 96 DPI:
+  // A4: 210mm x 297mm (794px x 1123px)
+  // Letter: 8.5in x 11in (816px x 1056px)
+  // A3: 297mm x 420mm (1123px x 1587px)
+  // Legal: 8.5in x 14in (816px x 1344px)
   const isLandscape = score.layoutSettings.orientation === 'landscape';
-  const pageWidth = isLandscape ? 1123 : 794;
-  const pageHeight = isLandscape ? 794 : 1123;
+  const requestedSize = (score.layoutSettings.pageSize || 'A4').toLowerCase();
+  let baseWidth = 794;
+  let baseHeight = 1123;
+  if (requestedSize === 'letter') {
+    baseWidth = 816;
+    baseHeight = 1056;
+  } else if (requestedSize === 'a3') {
+    baseWidth = 1123;
+    baseHeight = 1587;
+  } else if (requestedSize === 'legal') {
+    baseWidth = 816;
+    baseHeight = 1344;
+  }
+
+  const pageWidth = isLandscape ? baseHeight : baseWidth;
+  const pageHeight = isLandscape ? baseWidth : baseHeight;
   const zoom = score.layoutSettings.zoom || 1.0;
 
   const handTemplate = score.metadata.handTemplate || 'Both';
   const pickupBeat = score.metadata.pickupBeat || 1;
 
-  const staffMarginLeft = 44;
-  const staffMarginRight = 44;
-  const contentWidth = pageWidth - staffMarginLeft - staffMarginRight; // 706px Portrait, 1035px Landscape
+  const staffMarginLeft = score.layoutSettings.pageMargins?.left ?? 44;
+  const staffMarginRight = score.layoutSettings.pageMargins?.right ?? 44;
+  const contentWidth = Math.max(300, pageWidth - staffMarginLeft - staffMarginRight);
 
   const measureBlockHeight = 136;
   const systemGap = 24;
@@ -275,13 +299,20 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     handTemplate,
   ]);
 
+  // Normalized voltas from score
+  const voltas = useMemo(() => getNormalizedVoltas(score), [score]);
+
+  // Page margin bottom and footer reservation calculation
+  const pageMarginBottom = Math.max(28, score.layoutSettings.pageMargins?.bottom ?? 36);
+  const footerReservedHeight = 44;
+  const bottomPrintableMargin = pageHeight - pageMarginBottom - footerReservedHeight;
+
   // Group systems into exact A4 pages based on vertical height
   const pages = useMemo(() => {
     const pageList: { systems: typeof systems; startY: number }[] = [];
     let curPageSystems: typeof systems = [];
     const firstPageStartY = 145;
     const subsequentPageStartY = 50;
-    const bottomPrintableMargin = pageHeight - 48; // Leave margin for footer at bottom
     let currentY = firstPageStartY;
 
     systems.forEach((sys) => {
@@ -317,7 +348,11 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     return pageList.length > 0
       ? pageList
       : [{ systems: [], startY: firstPageStartY }];
-  }, [systems, pageHeight, measureBlockHeight, systemGap]);
+  }, [systems, measureBlockHeight, systemGap, bottomPrintableMargin]);
+
+  React.useEffect(() => {
+    onPageCountCalculated?.(pages.length);
+  }, [pages.length, onPageCountCalculated]);
 
   const quickChordPresets = ['C', 'Am', 'F', 'G7', 'Dm', 'Cmaj7', 'Em', 'A7', 'G', 'D'];
 
@@ -333,6 +368,10 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
       }}
     >
       {pages.map((pageData, pageIndex) => {
+        if (visiblePageIndices && !visiblePageIndices.includes(pageIndex)) {
+          return null;
+        }
+
         const pageSystems = pageData.systems;
         const startY = pageData.startY;
         let currentSystemY = startY;
@@ -487,14 +526,164 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                 const systemY = currentSystemY;
                 currentSystemY += measureBlockHeight + systemGap;
 
-                let currentX = staffMarginLeft;
+                // Precompute layout positions for measures in this system
+                let accX = staffMarginLeft;
+                const systemMeasures = system.measures.map((mItem) => {
+                  const mX = accX;
+                  accX += mItem.width;
+                  return { ...mItem, measureX: mX };
+                });
+
+                // Compute Volta ending segments across this system
+                const systemVoltas = voltas.map((v) => {
+                  const vStartIdx = score.measures.findIndex((m) => m.id === v.startMeasureId);
+                  const vEndIdx = score.measures.findIndex((m) => m.id === v.endMeasureId);
+                  if (vStartIdx === -1) return null;
+                  const safeEndIdx = vEndIdx === -1 ? vStartIdx : Math.max(vStartIdx, vEndIdx);
+
+                  const matchingInSys = systemMeasures.filter(
+                    (item) => item.measureIdx >= vStartIdx && item.measureIdx <= safeEndIdx
+                  );
+                  if (matchingInSys.length === 0) return null;
+
+                  const firstM = matchingInSys[0];
+                  const lastM = matchingInSys[matchingInSys.length - 1];
+
+                  const startX = firstM.measureX;
+                  const endX = lastM.measureX + lastM.width;
+
+                  const isVoltaStart = firstM.measureIdx === vStartIdx;
+                  const isVoltaEnd = lastM.measureIdx === safeEndIdx;
+                  const isVoltaSelected = selection.selectionType === 'volta' && selection.voltaId === v.id;
+
+                  const label = v.text || (v.endingNumbers && v.endingNumbers.length > 0 ? `${v.endingNumbers.join(', ')}.` : '1.');
+
+                  return {
+                    volta: v,
+                    startX,
+                    endX,
+                    isVoltaStart,
+                    isVoltaEnd,
+                    isVoltaSelected,
+                    label,
+                  };
+                }).filter(Boolean);
 
                 return (
                   <g key={`sys-${sysIdx}`} className="score-system">
-                    {system.measures.map(({ measure, width, measureIdx }, mIdxInSys) => {
-                      const measureX = currentX;
-                      currentX += width;
+                    {/* Render System-level Structured Voltas */}
+                    {systemVoltas.map((seg) => {
+                      if (!seg) return null;
+                      const { volta: v, startX, endX, isVoltaStart, isVoltaEnd, isVoltaSelected, label } = seg;
+                      const bracketY = systemY - 18;
+                      const hookLen = 14;
+                      const strokeColor = isVoltaSelected ? '#d97706' : '#1e293b';
+                      const strokeW = isVoltaSelected ? 2.5 : 1.6;
 
+                      return (
+                        <g
+                          key={`volta-${v.id}-${sysIdx}`}
+                          className="volta-bracket-group cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectVolta?.(v.id);
+                          }}
+                        >
+                          {/* Clickable hit area */}
+                          <rect
+                            x={startX - 2}
+                            y={bracketY - 8}
+                            width={Math.max(24, endX - startX + 4)}
+                            height={hookLen + 12}
+                            fill={isVoltaSelected ? 'rgba(217, 119, 6, 0.08)' : 'transparent'}
+                            stroke={isVoltaSelected ? '#f59e0b' : 'transparent'}
+                            strokeDasharray={isVoltaSelected ? '3 3' : 'none'}
+                            strokeWidth="1"
+                            rx="3"
+                            className="hover:fill-amber-500/10 transition-colors"
+                          />
+
+                          {/* Start downward hook */}
+                          {isVoltaStart && (
+                            <line
+                              x1={startX}
+                              y1={bracketY}
+                              x2={startX}
+                              y2={bracketY + hookLen}
+                              stroke={strokeColor}
+                              strokeWidth={strokeW}
+                              strokeLinecap="square"
+                            />
+                          )}
+
+                          {/* Horizontal spanning bar */}
+                          <line
+                            x1={startX}
+                            y1={bracketY}
+                            x2={endX}
+                            y2={bracketY}
+                            stroke={strokeColor}
+                            strokeWidth={strokeW}
+                            strokeLinecap="square"
+                          />
+
+                          {/* End downward hook (if closedEnd) */}
+                          {isVoltaEnd && v.closedEnd !== false && (
+                            <line
+                              x1={endX}
+                              y1={bracketY}
+                              x2={endX}
+                              y2={bracketY + hookLen}
+                              stroke={strokeColor}
+                              strokeWidth={strokeW}
+                              strokeLinecap="square"
+                            />
+                          )}
+
+                          {/* Ending label text */}
+                          {isVoltaStart && (
+                            <text
+                              x={startX + 6}
+                              y={bracketY + 11}
+                              fontFamily="'Plus Jakarta Sans', sans-serif"
+                              fontSize="11"
+                              fontWeight="bold"
+                              fill={isVoltaSelected ? '#d97706' : '#1e293b'}
+                              className="select-none pointer-events-none"
+                            >
+                              {label}
+                            </text>
+                          )}
+
+                          {/* Selected pill badge */}
+                          {isVoltaSelected && isVoltaStart && (
+                            <g transform={`translate(${startX + 34}, ${bracketY - 14})`}>
+                              <rect
+                                x="0"
+                                y="0"
+                                width="56"
+                                height="15"
+                                rx="3"
+                                fill="#d97706"
+                              />
+                              <text
+                                x="28"
+                                y="11"
+                                fontFamily="'Plus Jakarta Sans', sans-serif"
+                                fontSize="8.5"
+                                fontWeight="bold"
+                                fill="#ffffff"
+                                textAnchor="middle"
+                              >
+                                VOLTA
+                              </text>
+                            </g>
+                          )}
+                        </g>
+                      );
+                    })}
+
+                    {systemMeasures.map(({ measure, width, measureIdx, measureX }, mIdxInSys) => {
                       const isSelectedMeasure = selection.measureId === measure.id;
                       const totalBeats = getMeasureTotalBeats(measure, score.metadata.initialTimeSignature);
                       const colWidth = width / totalBeats;
@@ -511,37 +700,6 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                             }
                           }}
                         >
-                          {/* Volta Ending Bracket (1st, 2nd, 3rd Ending) */}
-                          {measure.voltaEnding && (
-                            <g>
-                              <line
-                                x1={measureX}
-                                y1={systemY - 14}
-                                x2={measureX + width}
-                                y2={systemY - 14}
-                                stroke="#1e293b"
-                                strokeWidth="1.5"
-                              />
-                              <line
-                                x1={measureX}
-                                y1={systemY - 14}
-                                x2={measureX}
-                                y2={systemY - 4}
-                                stroke="#1e293b"
-                                strokeWidth="1.5"
-                              />
-                              <text
-                                x={measureX + 4}
-                                y={systemY - 18}
-                                fontFamily="'Plus Jakarta Sans', sans-serif"
-                                fontSize="10"
-                                fontWeight="bold"
-                                fill="#1e293b"
-                              >
-                                {measure.voltaEnding}.
-                              </text>
-                            </g>
-                          )}
 
                           {/* Navigation Target badge (Segno, Coda, Fine) */}
                           {measure.navigationTarget && (
@@ -923,8 +1081,6 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                         const isRestDot = Boolean(p && (p as any).isRest);
                                         const hasAnyNoteInBeat = rawPitches.some((x) => x && x.step);
                                         const firstRealNoteIdx = rawPitches.findIndex((x) => x && x.step);
-                                        const isHigh = hasOctaveDotAbove(p);
-                                        const isLow = hasOctaveDotBelow(p);
 
                                         return (
                                           <g
@@ -961,17 +1117,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                               />
                                             )}
 
-                                            {/* High Octave: Dot ABOVE note */}
-                                            {!isEmptySub && isHigh && (
-                                              <circle
-                                                cx={noteX}
-                                                cy={systemY + 67}
-                                                r={2.2}
-                                                fill={isSubBeatActive ? '#b45309' : '#000000'}
-                                              />
-                                            )}
-
-                                            {/* Note letter or subdivision dot/dash */}
+                                            {/* Note letter with exact octave directly beside it, or subdivision dot/dash */}
                                             {isEmptySub ? (
                                               <text
                                                 x={noteX}
@@ -998,25 +1144,25 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                                 {p?.accidental && p.accidental !== 'natural' && (
                                                   <tspan
                                                     fontSize={count > 2 ? '10' : count === 2 ? '12' : '13'}
-                                                    dy={-4}
-                                                    dx={1}
+                                                    dy={-3}
+                                                    dx={0.5}
                                                     fontWeight="semibold"
                                                     fontFamily="'Plus Jakarta Sans', 'Noto Music', 'Segoe UI Symbol', sans-serif"
                                                   >
                                                     {getAccidentalGlyph(p.accidental)}
                                                   </tspan>
                                                 )}
+                                                <tspan
+                                                  fontSize={count > 2 ? '9' : count === 2 ? '11' : '12'}
+                                                  dy={p?.accidental && p.accidental !== 'natural' ? -2 : -5}
+                                                  dx={0.5}
+                                                  fontWeight="bold"
+                                                  fill={isSubBeatActive ? '#92400e' : '#1e293b'}
+                                                  fontFamily="'Plus Jakarta Sans', sans-serif"
+                                                >
+                                                  {getSuperscriptOctave(p?.octave ?? (handTemplate === 'LH' ? 3 : 4))}
+                                                </tspan>
                                               </text>
-                                            )}
-
-                                            {/* Low Octave: Dot BELOW note */}
-                                            {!isEmptySub && isLow && (
-                                              <circle
-                                                cx={noteX}
-                                                cy={systemY + 91}
-                                                r={2.2}
-                                                fill={isSubBeatActive ? '#b45309' : '#000000'}
-                                              />
                                             )}
                                           </g>
                                         );
@@ -1425,41 +1571,44 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                 );
               })}
 
-              {/* Page Footer */}
-              <g className="score-footer">
+              {/* Canonical Score Page Footer */}
+              <g className="score-footer score-page-footer">
                 <line
                   x1={staffMarginLeft}
-                  y1={pageHeight - 34}
+                  y1={pageHeight - pageMarginBottom + 8}
                   x2={pageWidth - staffMarginRight}
-                  y2={pageHeight - 34}
-                  stroke="#e2e8f0"
+                  y2={pageHeight - pageMarginBottom + 8}
+                  stroke="#cbd5e1"
                   strokeWidth="1"
                 />
                 <text
                   x={staffMarginLeft}
-                  y={pageHeight - 18}
+                  y={pageHeight - Math.max(10, pageMarginBottom * 0.35)}
                   fontFamily="'Plus Jakarta Sans', sans-serif"
                   fontSize="10"
-                  fill="#94a3b8"
+                  fontWeight="500"
+                  fill="#475569"
                 >
                   {score.metadata.copyright || '© Pianotastic Academy'}
                 </text>
                 <text
                   x={pageWidth / 2}
-                  y={pageHeight - 18}
+                  y={pageHeight - Math.max(10, pageMarginBottom * 0.35)}
                   fontFamily="'Plus Jakarta Sans', sans-serif"
-                  fontSize="9"
-                  fill="#cbd5e1"
+                  fontSize="9.5"
+                  fontWeight="600"
+                  fill="#64748b"
                   textAnchor="middle"
                 >
                   Pianotastic Sheet Music
                 </text>
                 <text
                   x={pageWidth - staffMarginRight}
-                  y={pageHeight - 18}
+                  y={pageHeight - Math.max(10, pageMarginBottom * 0.35)}
                   fontFamily="'Plus Jakarta Sans', sans-serif"
                   fontSize="10"
-                  fill="#94a3b8"
+                  fontWeight="600"
+                  fill="#334155"
                   textAnchor="end"
                 >
                   Page {pageIndex + 1} of {pages.length}

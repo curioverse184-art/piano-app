@@ -58,12 +58,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const formatDate = (dateStr: string) => {
     try {
       const d = new Date(dateStr);
+      const diffMs = Date.now() - d.getTime();
+      const diffMinutes = Math.floor(diffMs / 60000);
+      if (diffMinutes < 2) return 'Just now';
+      if (diffMinutes < 60) return `${diffMinutes}m ago`;
+      if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)}h ago`;
       return d.toLocaleDateString(undefined, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
       });
     } catch {
       return 'Recently';
@@ -286,7 +289,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                       <div className="flex items-center space-x-1 text-[11px] text-stone-500">
                         <Clock className="w-3 h-3" />
-                        <span>Modified {formatDate(project.lastModified)}</span>
+                        <span>Last saved: {formatDate(project.lastModified)}</span>
                       </div>
                     </div>
 

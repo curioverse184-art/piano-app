@@ -8,6 +8,7 @@ import {
   NoteStep,
   AccidentalType,
   NoteDuration,
+  Volta,
 } from '../types/score';
 
 /**
@@ -26,20 +27,44 @@ export function getAccidentalGlyph(accidental: AccidentalType | undefined): stri
 }
 
 /**
- * Format a Pitch into clean letter notation matching the custom Pianotastic format.
- * Examples: "C", "D♯", "E♭", "F♯", "G", "A♭", "B"
+ * Convert numeric octave (0 to 8) to superscript character:
+ * Examples: 4 -> '⁴', 3 -> '³', 5 -> '⁵', 2 -> '²'
  */
-export function formatNoteLetter(pitch: Pitch | null | undefined): string {
-  if (!pitch || !pitch.step) return '—';
-  const acc = getAccidentalGlyph(pitch.accidental);
-  return `${pitch.step}${acc}`;
+export function getSuperscriptOctave(octave: number | null | undefined): string {
+  if (octave === null || octave === undefined || typeof octave !== 'number') return '';
+  const superscripts: Record<number, string> = {
+    0: '⁰',
+    1: '¹',
+    2: '²',
+    3: '³',
+    4: '⁴',
+    5: '⁵',
+    6: '⁶',
+    7: '⁷',
+    8: '⁸',
+    9: '⁹',
+  };
+  return superscripts[octave] ?? `${octave}`;
 }
 
 /**
- * Categorize pitch octave:
- * - Low octave (octave <= 3): Dot below
- * - Middle octave (octave === 4): Reference, no dot
- * - High octave (octave >= 5): Dot above
+ * Format a Pitch into clean letter notation with its exact octave.
+ * Examples: "C⁴", "C♯⁴", "B♭³", "D⁵", "F♯²"
+ */
+export function formatNoteLetter(pitch: Pitch | null | undefined, defaultOctave = 4): string {
+  if (!pitch || !pitch.step) return '—';
+  const acc = getAccidentalGlyph(pitch.accidental);
+  const octNum = typeof pitch.octave === 'number' ? pitch.octave : defaultOctave;
+  const oct = getSuperscriptOctave(octNum);
+  return `${pitch.step}${acc}${oct}`;
+}
+
+export function formatNoteWithOctave(pitch: Pitch | null | undefined, defaultOctave = 4): string {
+  return formatNoteLetter(pitch, defaultOctave);
+}
+
+/**
+ * Deprecated dot checks: always return false to completely disable octave dots.
  */
 export function getOctaveType(pitch: Pitch | null | undefined): 'low' | 'middle' | 'high' {
   if (!pitch || typeof pitch.octave !== 'number') return 'middle';
@@ -48,12 +73,107 @@ export function getOctaveType(pitch: Pitch | null | undefined): 'low' | 'middle'
   return 'middle';
 }
 
-export function hasOctaveDotBelow(pitch: Pitch | null | undefined): boolean {
-  return !!pitch && typeof pitch.octave === 'number' && pitch.octave <= 3;
+export function hasOctaveDotBelow(_pitch: Pitch | null | undefined): boolean {
+  return false;
 }
 
-export function hasOctaveDotAbove(pitch: Pitch | null | undefined): boolean {
-  return !!pitch && typeof pitch.octave === 'number' && pitch.octave >= 5;
+export function hasOctaveDotAbove(_pitch: Pitch | null | undefined): boolean {
+  return false;
+}
+
+/**
+ * Normalize score voltas:
+ * If score.voltas exists, return it.
+ * Otherwise, if legacy measures have voltaEnding, convert to structured Voltas.
+ */
+export function getNormalizedVoltas(score: Score): Volta[] {
+  if (score.voltas && score.voltas.length > 0) {
+    return score.voltas;
+  }
+  // Synthesize from measures if legacy score
+  const voltas: Volta[] = [];
+  let currentVoltaEnding: number | null = null;
+  let startMeasureId: string | null = null;
+  let endMeasureId: string | null = null;
+
+  score.measures.forEach((m) => {
+    if (m.voltaEnding) {
+      if (currentVoltaEnding === m.voltaEnding) {
+        endMeasureId = m.id;
+      } else {
+        if (currentVoltaEnding && startMeasureId && endMeasureId) {
+          voltas.push({
+            id: `volta_legacy_${startMeasureId}`,
+            type: 'volta',
+            endingNumbers: [currentVoltaEnding],
+            startMeasureId,
+            endMeasureId,
+            closedEnd: currentVoltaEnding === 1,
+          });
+        }
+        currentVoltaEnding = m.voltaEnding;
+        startMeasureId = m.id;
+        endMeasureId = m.id;
+      }
+    } else {
+      if (currentVoltaEnding && startMeasureId && endMeasureId) {
+        voltas.push({
+          id: `volta_legacy_${startMeasureId}`,
+          type: 'volta',
+          endingNumbers: [currentVoltaEnding],
+          startMeasureId,
+          endMeasureId,
+          closedEnd: currentVoltaEnding === 1,
+        });
+        currentVoltaEnding = null;
+        startMeasureId = null;
+        endMeasureId = null;
+      }
+    }
+  });
+
+  if (currentVoltaEnding && startMeasureId && endMeasureId) {
+    voltas.push({
+      id: `volta_legacy_${startMeasureId}`,
+      type: 'volta',
+      endingNumbers: [currentVoltaEnding],
+      startMeasureId,
+      endMeasureId,
+      closedEnd: currentVoltaEnding === 1,
+    });
+  }
+
+  return voltas;
+}
+
+/**
+ * Sync voltaEnding onto measures so legacy export and MIDI routes remain synchronized
+ */
+export function syncMeasuresVoltaEndings(measures: Measure[], voltas: Volta[]): Measure[] {
+  const measureVoltaMap = new Map<string, number>();
+
+  voltas.forEach((v) => {
+    const startIdx = measures.findIndex((m) => m.id === v.startMeasureId);
+    const endIdx = measures.findIndex((m) => m.id === v.endMeasureId);
+    if (startIdx !== -1 && endIdx !== -1) {
+      const from = Math.min(startIdx, endIdx);
+      const to = Math.max(startIdx, endIdx);
+      const endingNum = v.endingNumbers[0] as 1 | 2 | 3;
+      for (let i = from; i <= to; i++) {
+        measureVoltaMap.set(measures[i].id, endingNum);
+      }
+    } else if (startIdx !== -1) {
+      measureVoltaMap.set(measures[startIdx].id, v.endingNumbers[0] as 1 | 2 | 3);
+    }
+  });
+
+  return measures.map((m) => {
+    const ending = measureVoltaMap.get(m.id);
+    if (m.voltaEnding !== ending) {
+      return { ...m, voltaEnding: ending as 1 | 2 | 3 | undefined };
+    }
+    return m;
+  });
 }
 
 export function formatSubdivisionDisplay(pitch: Pitch | null | undefined): string {

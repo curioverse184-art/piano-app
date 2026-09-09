@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import {
   Score,
   Measure,
@@ -150,6 +150,10 @@ export class ExportService {
     if (!pageElements || pageElements.length === 0) {
       window.print();
       return;
+    }
+
+    if (document.fonts?.ready) {
+      await document.fonts.ready;
     }
 
     for (let i = 0; i < pageElements.length; i++) {

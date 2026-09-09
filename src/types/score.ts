@@ -53,9 +53,21 @@ export type NavigationTarget = 'none' | 'Segno' | 'Coda' | 'Fine';
 
 export type VoltaEnding = 1 | 2 | 3;
 
+export interface Volta {
+  id: string;
+  type?: 'volta';
+  endingNumbers: number[]; // e.g. [1], [2], [1, 2], [3]
+  startMeasureId: string;
+  endMeasureId: string;
+  startBeat?: number;
+  endBeat?: number;
+  closedEnd?: boolean; // true = downward hook at right end (default true for 1st ending), false = open bracket
+  text?: string; // Custom label override (e.g., "1.", "2.", "1, 2.")
+}
+
 export type TempoBeatUnit = 'quarter' | 'half' | 'dotted_quarter';
 
-export type PageSize = 'A4' | 'Letter';
+export type PageSize = 'A4' | 'Letter' | 'A3' | 'Legal';
 export type Orientation = 'portrait' | 'landscape';
 
 export type ArticulationType = 'none' | 'staccato' | 'accent' | 'tenuto' | 'fermata';
@@ -246,6 +258,7 @@ export interface Score {
   measures: Measure[];
   learningLayer?: LearningLayerSettings;
   textAnnotations?: ScoreTextAnnotation[];
+  voltas?: Volta[];
 }
 
 export interface SavedProject {
@@ -270,7 +283,8 @@ export interface SelectionState {
   pitchIndex?: number;
   chordSymbolId?: string | null;
   textAnnotationId?: string | null;
-  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'chord' | 'lyrics' | 'symbol' | 'text';
+  voltaId?: string | null;
+  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'chord' | 'lyrics' | 'symbol' | 'text' | 'volta';
 }
 
 export interface PianotasticProject {
