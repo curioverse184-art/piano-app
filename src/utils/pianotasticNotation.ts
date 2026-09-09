@@ -11,16 +11,27 @@ import {
 } from '../types/score';
 
 /**
+ * Return standard musical glyph for an accidental:
+ * Sharp: ♯ (U+266F)
+ * Flat: ♭ (U+266D)
+ * Natural: ♮ (U+266E)
+ */
+export function getAccidentalGlyph(accidental: AccidentalType | undefined): string {
+  if (accidental === 'sharp') return '♯';
+  if (accidental === 'flat') return '♭';
+  if (accidental === 'natural') return '♮';
+  if (accidental === 'double_sharp') return '𝄪';
+  if (accidental === 'double_flat') return '𝄫';
+  return '';
+}
+
+/**
  * Format a Pitch into clean letter notation matching the custom Pianotastic format.
- * Examples: "C", "D#", "Eb", "F#", "G", "Ab", "B"
+ * Examples: "C", "D♯", "E♭", "F♯", "G", "A♭", "B"
  */
 export function formatNoteLetter(pitch: Pitch | null | undefined): string {
   if (!pitch || !pitch.step) return '—';
-  let acc = '';
-  if (pitch.accidental === 'sharp') acc = '#';
-  else if (pitch.accidental === 'flat') acc = 'b';
-  else if (pitch.accidental === 'double_sharp') acc = '##';
-  else if (pitch.accidental === 'double_flat') acc = 'bb';
+  const acc = getAccidentalGlyph(pitch.accidental);
   return `${pitch.step}${acc}`;
 }
 
@@ -53,8 +64,8 @@ export function formatSubdivisionDisplay(pitch: Pitch | null | undefined): strin
 /**
  * Total number of beat columns in a measure based on its time signature.
  */
-export function getMeasureTotalBeats(measure: Measure, defaultTs: TimeSignature): number {
-  if (measure.timeSignature?.numerator) {
+export function getMeasureTotalBeats(measure: Measure | null | undefined, defaultTs: TimeSignature): number {
+  if (measure?.timeSignature?.numerator) {
     return measure.timeSignature.numerator;
   }
   return defaultTs?.numerator || 4;
@@ -258,10 +269,11 @@ export function syncMeasureEventsFromBeatData(
             });
           }
           if (handTemplate !== 'RH') {
+            const pOctave = typeof p.octave === 'number' && !isNaN(p.octave) ? p.octave : 4;
             lhEvents.push({
               id: `lh_${measure.id}_b${b}_s${pIdx}_${now}`,
               type: 'note',
-              pitches: [{ ...p, octave: Math.max(1, p.octave - 1) }], // lh accompaniment
+              pitches: [{ ...p, octave: Math.max(1, pOctave - 1) }], // lh accompaniment
               duration,
             });
           }

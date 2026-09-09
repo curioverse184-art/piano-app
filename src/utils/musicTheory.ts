@@ -386,24 +386,26 @@ const STEP_SEMITONES: Record<NoteStep, number> = {
 };
 
 export function getMidiNote(
-  pitch: Pitch,
+  pitch: Pitch | null | undefined,
   keySignatureId = 'C_major',
   measureAccidentals?: Partial<Record<string, AccidentalType>>
 ): number {
-  const keyInfo = KEY_SIGNATURES[keySignatureId] || KEY_SIGNATURES['C_major'];
+  if (!pitch || !pitch.step) return 60;
+  const keyInfo = KEY_SIGNATURES[keySignatureId] || KEY_SIGNATURES['C_major'] || { alteredNotes: {} };
   let accidental = pitch.accidental;
+  const octave = typeof pitch.octave === 'number' && !isNaN(pitch.octave) ? pitch.octave : 4;
 
   // If no explicit accidental on note, check measure accidental or key signature
   if (accidental === undefined || accidental === null) {
-    const key = `${pitch.step}${pitch.octave}`;
+    const key = `${pitch.step}${octave}`;
     if (measureAccidentals && measureAccidentals[key]) {
       accidental = measureAccidentals[key];
-    } else if (keyInfo.alteredNotes[pitch.step]) {
+    } else if (keyInfo?.alteredNotes && keyInfo.alteredNotes[pitch.step]) {
       accidental = keyInfo.alteredNotes[pitch.step];
     }
   }
 
-  let semitones = STEP_SEMITONES[pitch.step];
+  let semitones = STEP_SEMITONES[pitch.step] ?? 0;
   if (accidental === 'sharp') semitones += 1;
   else if (accidental === 'double_sharp') semitones += 2;
   else if (accidental === 'flat') semitones -= 1;
@@ -411,10 +413,11 @@ export function getMidiNote(
   // natural does not change base semitone
 
   // C4 is MIDI 60 => (4 + 1) * 12 + 0 = 60
-  return (pitch.octave + 1) * 12 + semitones;
+  return (octave + 1) * 12 + semitones;
 }
 
 export function midiToFrequency(midi: number): number {
+  if (typeof midi !== 'number' || isNaN(midi)) return 261.63; // Safe C4 frequency
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
@@ -431,8 +434,10 @@ const STEP_INDEX: Record<NoteStep, number> = {
 
 const INDEX_TO_STEP: NoteStep[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 
-export function getDiatonicStepValue(pitch: Pitch): number {
-  return pitch.octave * 7 + STEP_INDEX[pitch.step];
+export function getDiatonicStepValue(pitch: Pitch | null | undefined): number {
+  if (!pitch || !pitch.step) return 28; // C4 default (4 * 7 + 0)
+  const octave = typeof pitch.octave === 'number' && !isNaN(pitch.octave) ? pitch.octave : 4;
+  return octave * 7 + (STEP_INDEX[pitch.step] ?? 0);
 }
 
 export function pitchFromDiatonicStepValue(stepVal: number): { step: NoteStep; octave: number } {
@@ -515,10 +520,11 @@ export function getLedgerLineOffsets(stepOffset: number): number[] {
   return ledgers;
 }
 
-export function formatPitchName(pitch: Pitch, keySignatureId = 'C_major'): string {
+export function formatPitchName(pitch: Pitch | null | undefined, keySignatureId = 'C_major'): string {
+  if (!pitch || !pitch.step) return '';
   const keyInfo = KEY_SIGNATURES[keySignatureId] || KEY_SIGNATURES['C_major'];
   let accStr = '';
-  const accidental = pitch.accidental ?? keyInfo.alteredNotes[pitch.step];
+  const accidental = pitch.accidental ?? keyInfo?.alteredNotes?.[pitch.step];
   if (accidental === 'sharp') accStr = '♯';
   else if (accidental === 'flat') accStr = '♭';
   else if (accidental === 'natural') accStr = '♮';

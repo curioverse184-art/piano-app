@@ -25,6 +25,11 @@ class AudioEngine {
   private accentFirstBeat = true;
   private masterVolume = 0.85;
 
+  // Selected playback start parameters
+  private initialStartBeatIndex = 0;
+  private initialStartSubBeatIndex = 0;
+  private isFirstMeasureOfPlayback = false;
+
   private initContext(): AudioContext {
     if (!this.ctx) {
       const AudioCtxClass =
@@ -242,10 +247,15 @@ class AudioEngine {
   }
 
   /**
-   * Start playback of score from specific measure index or from beginning,
+   * Start playback of score from specific measure index, beat index, and subdivision,
    * fully evaluating the navigation route (repeats, voltas, D.C., D.S., Coda, Fine).
    */
-  public async playScore(score: Score, startMeasureIndex = 0) {
+  public async playScore(
+    score: Score,
+    startMeasureIndex = 0,
+    startBeatIndex = 0,
+    startSubBeatIndex = 0
+  ) {
     const ctx = this.initContext();
     if (ctx.state === 'suspended') {
       try {
@@ -256,6 +266,9 @@ class AudioEngine {
     }
     this.stopPlayback();
     this.currentScore = score;
+    this.initialStartBeatIndex = Math.max(0, startBeatIndex);
+    this.initialStartSubBeatIndex = Math.max(0, startSubBeatIndex);
+    this.isFirstMeasureOfPlayback = true;
 
     // Calculate full playback route
     const validation = calculatePlaybackRoute(
@@ -305,28 +318,46 @@ class AudioEngine {
     const ts = measure.timeSignature || currentStep.timeSignature || this.currentScore.metadata.initialTimeSignature || { numerator: 4, denominator: 4 };
     const measureCapacityBeats = (ts.numerator * 4) / ts.denominator;
     const measureDurationSec = measureCapacityBeats * quarterNoteSec;
+    const beatDurationSec = (4 / ts.denominator) * quarterNoteSec;
 
-    // Report measure position to UI
-    this.onPositionUpdate?.(currentStep.measureIndex, 0, this.currentRouteIndex);
+    let startBeat = 0;
+    let startSub = 0;
+    let startOffsetSec = 0;
 
-    // Schedule metronome clicks for this measure respecting time signature
-    for (let beat = 0; beat < ts.numerator; beat++) {
-      const beatOffsetSec = beat * (4 / ts.denominator) * quarterNoteSec;
-      // High click on beat 0
-      this.playClick(beat === 0, beatOffsetSec);
+    if (this.isFirstMeasureOfPlayback) {
+      startBeat = Math.min(ts.numerator - 1, this.initialStartBeatIndex);
+      const effVal = measure.beatValues?.[startBeat] || getEffectiveBeatValue(this.currentScore, currentStep.measureIndex, startBeat);
+      startSub = Math.min(Math.max(0, effVal - 1), this.initialStartSubBeatIndex);
+      const subDurationSec = beatDurationSec / effVal;
+      startOffsetSec = startBeat * beatDurationSec + startSub * subDurationSec;
+      this.isFirstMeasureOfPlayback = false;
+    }
 
-      // Report fractional beat to UI for smooth playhead cursor
-      if (beat > 0) {
-        window.setTimeout(() => {
-          if (this.isPlaying) {
-            this.onPositionUpdate?.(currentStep.measureIndex, beat, this.currentRouteIndex);
-          }
-        }, beatOffsetSec * 1000);
+    const remainingMeasureDurationSec = Math.max(0.04, measureDurationSec - startOffsetSec);
+
+    // Report starting measure and beat position to UI immediately
+    this.onPositionUpdate?.(currentStep.measureIndex, startBeat, this.currentRouteIndex);
+
+    // Schedule metronome clicks for this measure respecting startBeat
+    for (let beat = startBeat; beat < ts.numerator; beat++) {
+      const beatOffsetSec = beat * beatDurationSec - startOffsetSec;
+      if (beatOffsetSec >= -0.001) {
+        this.playClick(beat === 0, Math.max(0, beatOffsetSec));
+
+        // Report beat position to UI for smooth playhead cursor
+        if (beat > startBeat) {
+          const timerId = window.setTimeout(() => {
+            if (this.isPlaying) {
+              this.onPositionUpdate?.(currentStep.measureIndex, beat, this.currentRouteIndex);
+            }
+          }, beatOffsetSec * 1000);
+          this.scheduledEvents.push({ stop: () => clearTimeout(timerId) });
+        }
       }
     }
 
     // Schedule simultaneous harmonic chord playback for this measure
-    this.scheduleMeasureChords(measure, quarterNoteSec, ts, currentStep.measureIndex);
+    this.scheduleMeasureChords(measure, quarterNoteSec, ts, currentStep.measureIndex, startBeat, startOffsetSec);
 
     // Schedule audio events: check if measure has explicit beatNotes
     const hasBeatNotes =
@@ -336,7 +367,16 @@ class AudioEngine {
       );
 
     if (hasBeatNotes) {
-      this.schedulePianotasticBeatNotes(measure, keySig, quarterNoteSec, ts, currentStep.measureIndex);
+      this.schedulePianotasticBeatNotes(
+        measure,
+        keySig,
+        quarterNoteSec,
+        ts,
+        currentStep.measureIndex,
+        startBeat,
+        startSub,
+        startOffsetSec
+      );
     } else {
       // Fallback for legacy staff events
       this.scheduleStaffEvents(measure.rhEvents, keySig, quarterNoteSec);
@@ -347,7 +387,7 @@ class AudioEngine {
     if (currentStep.isFine) {
       this.playbackTimer = window.setTimeout(() => {
         this.stopPlayback();
-      }, measureDurationSec * 1000);
+      }, remainingMeasureDurationSec * 1000);
       return;
     }
 
@@ -355,9 +395,11 @@ class AudioEngine {
     this.playbackTimer = window.setTimeout(() => {
       if (this.isPlaying) {
         this.currentRouteIndex++;
+        this.initialStartBeatIndex = 0;
+        this.initialStartSubBeatIndex = 0;
         this.runPlaybackLoop();
       }
-    }, measureDurationSec * 1000);
+    }, remainingMeasureDurationSec * 1000);
   }
 
   /**
@@ -369,7 +411,9 @@ class AudioEngine {
     measure: Measure,
     quarterNoteSec: number,
     ts: TimeSignature,
-    measureIndex: number
+    measureIndex: number,
+    startBeat = 0,
+    startOffsetSec = 0
   ) {
     const pickupBeat = this.currentScore?.metadata?.pickupBeat || 1;
     const isFirstMeasure = measure.measureNumber === 1 || measureIndex === 0;
@@ -377,7 +421,7 @@ class AudioEngine {
     const totalBeats = ts.numerator;
     const beatDurationSec = (4 / ts.denominator) * quarterNoteSec;
 
-    for (let b = 0; b < totalBeats; b++) {
+    for (let b = Math.max(startBeat, 0); b < totalBeats; b++) {
       if (isFirstMeasure && b < lockedBeforeBeat) {
         continue; // Locked pickup beat remains silent
       }
@@ -396,15 +440,17 @@ class AudioEngine {
       if (chordStr) {
         const chordMidis = parseChordToMidiNotes(chordStr);
         if (chordMidis && chordMidis.length > 0) {
-          const beatOffsetSec = b * beatDurationSec;
-          // Chord sounds for the duration of the beat
-          const chordDurationSec = Math.max(0.18, beatDurationSec * 0.96);
+          const beatOffsetSec = b * beatDurationSec - startOffsetSec;
+          if (beatOffsetSec >= -0.01) {
+            // Chord sounds for the duration of the beat
+            const chordDurationSec = Math.max(0.18, beatDurationSec * 0.96);
 
-          for (const midi of chordMidis) {
-            const freq = midiToFrequency(midi);
-            const handle = this.playTone(freq, chordDurationSec, 0.65, beatOffsetSec);
-            if (handle) {
-              this.scheduledEvents.push(handle);
+            for (const midi of chordMidis) {
+              const freq = midiToFrequency(midi);
+              const handle = this.playTone(freq, chordDurationSec, 0.65, Math.max(0, beatOffsetSec));
+              if (handle) {
+                this.scheduledEvents.push(handle);
+              }
             }
           }
         }
@@ -424,7 +470,10 @@ class AudioEngine {
     keySig: string,
     quarterNoteSec: number,
     ts: TimeSignature,
-    measureIndex: number
+    measureIndex: number,
+    startBeat = 0,
+    startSub = 0,
+    startOffsetSec = 0
   ) {
     const pickupBeat = this.currentScore?.metadata?.pickupBeat || 1;
     const isFirstMeasure = measure.measureNumber === 1 || measureIndex === 0;
@@ -432,7 +481,7 @@ class AudioEngine {
     const totalBeats = ts.numerator;
     const beatDurationSec = (4 / ts.denominator) * quarterNoteSec;
 
-    for (let b = 0; b < totalBeats; b++) {
+    for (let b = Math.max(startBeat, 0); b < totalBeats; b++) {
       if (isFirstMeasure && b < lockedBeforeBeat) {
         continue; // Locked pickup beat remains silent
       }
@@ -442,7 +491,6 @@ class AudioEngine {
         (this.currentScore ? getEffectiveBeatValue(this.currentScore, measureIndex, b) : 1);
 
       const subDurationSec = beatDurationSec / effVal;
-      const beatOffsetSec = b * beatDurationSec;
       const pitches = measure.beatNotes?.[b] || [];
 
       // Check if beat has an active chord
@@ -451,24 +499,27 @@ class AudioEngine {
         (measure.chordSymbols && measure.chordSymbols.some((c) => Math.floor(c.beatOffset) === b))
       );
 
-      for (let s = 0; s < effVal; s++) {
+      const minSub = b === startBeat ? startSub : 0;
+      for (let s = minSub; s < effVal; s++) {
         const pitch = pitches[s] ?? null;
         if (pitch && pitch.step) {
-          const timeOffsetSec = beatOffsetSec + s * subDurationSec;
-          const noteDurationSec = Math.max(0.08, subDurationSec * 0.90);
-          const midi = getMidiNote(pitch, keySig);
-          const freq = midiToFrequency(midi);
-          const handle = this.playTone(freq, noteDurationSec, 0.85, timeOffsetSec);
-          if (handle) {
-            this.scheduledEvents.push(handle);
-          }
+          const timeOffsetSec = (b * beatDurationSec + s * subDurationSec) - startOffsetSec;
+          if (timeOffsetSec >= -0.01) {
+            const noteDurationSec = Math.max(0.08, subDurationSec * 0.90);
+            const midi = getMidiNote(pitch, keySig);
+            const freq = midiToFrequency(midi);
+            const handle = this.playTone(freq, noteDurationSec, 0.85, Math.max(0, timeOffsetSec));
+            if (handle) {
+              this.scheduledEvents.push(handle);
+            }
 
-          // Subtle left-hand accompaniment an octave lower ONLY if no explicit chord is attached to beat
-          if (!hasBeatChord) {
-            const lhMidi = Math.max(21, midi - 12);
-            const lhHandle = this.playTone(midiToFrequency(lhMidi), noteDurationSec, 0.35, timeOffsetSec);
-            if (lhHandle) {
-              this.scheduledEvents.push(lhHandle);
+            // Subtle left-hand accompaniment an octave lower ONLY if no explicit chord is attached to beat
+            if (!hasBeatChord) {
+              const lhMidi = Math.max(21, midi - 12);
+              const lhHandle = this.playTone(midiToFrequency(lhMidi), noteDurationSec, 0.35, Math.max(0, timeOffsetSec));
+              if (lhHandle) {
+                this.scheduledEvents.push(lhHandle);
+              }
             }
           }
         }

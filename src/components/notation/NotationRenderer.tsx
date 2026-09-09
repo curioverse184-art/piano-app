@@ -12,6 +12,7 @@ import {
 } from '../../types/score';
 import {
   formatNoteLetter,
+  getAccidentalGlyph,
   getMeasureTotalBeats,
   isBeatLockedByPickup,
   getMeasureBeatPitches,
@@ -64,6 +65,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
   onToggleLineBreak,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const isPlaying = Boolean(playbackPosition) || audioEngine.getIsPlaying();
 
   // Inline Editing Popovers State
   const [activeChordPopover, setActiveChordPopover] = useState<{
@@ -135,7 +137,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
 
       // Accidental extra space
       const hasAccidental = pitches.some(
-        (p) => p.accidental && p.accidental !== 'natural'
+        (p) => Boolean(p && p.accidental && p.accidental !== 'natural')
       );
       if (hasAccidental) noteSpacing += 8;
 
@@ -170,102 +172,37 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     return Math.max(defaultBlankWidth, contentRequired, measure.customWidth || 0);
   };
 
-  // Dynamic Reflow & Measures per system calculation
+  // Dynamic Reflow & Measures per system calculation (Honors manual line breaks independently)
   const systems = useMemo(() => {
     const sysList: { measures: { measure: Measure; width: number; measureIdx: number; naturalWidth: number }[] }[] = [];
     const measureLock = score.layoutSettings.measureLockPerLine;
-    const isLocked = measureLock !== null && measureLock !== undefined && measureLock > 0;
     const userBarsPerLine =
       score.layoutSettings.barsPerLine || score.layoutSettings.measuresPerSystemAuto || 4;
+    const maxBarsPerLine =
+      measureLock !== null && measureLock !== undefined && measureLock > 0
+        ? Math.max(1, Math.round(measureLock))
+        : Math.max(1, userBarsPerLine);
 
-    if (isLocked) {
-      // 1. Measure Lock Per Line is ACTIVE: strictly L measures per line
-      const L = Math.max(1, Math.round(measureLock));
-      for (let i = 0; i < score.measures.length; i += L) {
-        const lineMeasures = score.measures.slice(i, i + L);
-        const systemMeasures = lineMeasures.map((m, offset) => ({
-          measure: m,
-          width: 0,
-          measureIdx: i + offset,
-          naturalWidth: getMeasureNaturalWidth(m),
-        }));
+    let currentSystem: { measure: Measure; width: number; measureIdx: number; naturalWidth: number }[] = [];
+    let currentNaturalSum = 0;
 
-        const isFullLine = systemMeasures.length === L;
-        const totalNatural = systemMeasures.reduce((acc, m) => acc + m.naturalWidth, 0);
+    score.measures.forEach((m, idx) => {
+      const natWidth = getMeasureNaturalWidth(m);
+      const prevMeasure = currentSystem.length > 0 ? currentSystem[currentSystem.length - 1].measure : null;
+      const prevHadManualBreak = prevMeasure ? Boolean(prevMeasure.systemBreak) : false;
 
-        // Distribute contentWidth across measures proportionally to naturalWidth
-        // so denser measures get proportionately more width, while all lines
-        // align cleanly to left and right page boundaries!
+      const wouldExceedBars = currentSystem.length >= maxBarsPerLine;
+      const wouldOverflowWidth = currentSystem.length > 0 && currentNaturalSum + natWidth > contentWidth;
+
+      // Break if previous measure explicitly requested a systemBreak, or maxBars exceeded, or line would overflow
+      const shouldBreak = prevHadManualBreak || wouldExceedBars || wouldOverflowWidth;
+
+      if (currentSystem.length > 0 && shouldBreak) {
+        const totalNat = Math.max(1, currentNaturalSum);
+        const isFullLine = currentSystem.length >= maxBarsPerLine || wouldOverflowWidth || prevHadManualBreak;
         const targetLineWidth = isFullLine
           ? contentWidth
-          : Math.min(contentWidth, Math.max(totalNatural, (contentWidth / L) * systemMeasures.length));
-
-        let accumulatedWidth = 0;
-        systemMeasures.forEach((item, idx) => {
-          if (idx === systemMeasures.length - 1) {
-            item.width = targetLineWidth - accumulatedWidth;
-          } else {
-            const propWidth = Math.round((targetLineWidth * item.naturalWidth) / totalNatural);
-            item.width = propWidth;
-            accumulatedWidth += propWidth;
-          }
-        });
-
-        sysList.push({ measures: systemMeasures });
-      }
-    } else {
-      // 2. Dynamic Content-Aware Wrapping with Manual Line Breaks
-      let currentSystem: { measure: Measure; width: number; measureIdx: number; naturalWidth: number }[] = [];
-      let currentNaturalSum = 0;
-
-      score.measures.forEach((m, idx) => {
-        const natWidth = getMeasureNaturalWidth(m);
-        const prevMeasure = currentSystem.length > 0 ? currentSystem[currentSystem.length - 1].measure : null;
-        const prevHadManualBreak = prevMeasure ? Boolean(prevMeasure.systemBreak) : false;
-
-        const wouldExceedBars = currentSystem.length >= userBarsPerLine;
-        const wouldOverflowWidth = currentSystem.length > 0 && (currentNaturalSum + natWidth > contentWidth);
-
-        const shouldBreak = prevHadManualBreak || wouldExceedBars || wouldOverflowWidth;
-
-        if (currentSystem.length > 0 && shouldBreak) {
-          const totalNat = currentNaturalSum;
-          const isFullLine = currentSystem.length >= userBarsPerLine || wouldOverflowWidth;
-          const targetLineWidth = isFullLine
-            ? contentWidth
-            : Math.min(contentWidth, Math.max(totalNat, (contentWidth / userBarsPerLine) * currentSystem.length));
-
-          let accumulatedWidth = 0;
-          currentSystem.forEach((item, itemIdx) => {
-            if (itemIdx === currentSystem.length - 1) {
-              item.width = targetLineWidth - accumulatedWidth;
-            } else {
-              const propWidth = Math.round((targetLineWidth * item.naturalWidth) / totalNat);
-              item.width = propWidth;
-              accumulatedWidth += propWidth;
-            }
-          });
-
-          sysList.push({ measures: currentSystem });
-          currentSystem = [];
-          currentNaturalSum = 0;
-        }
-
-        currentSystem.push({
-          measure: m,
-          width: 0,
-          measureIdx: idx,
-          naturalWidth: natWidth,
-        });
-        currentNaturalSum += natWidth;
-      });
-
-      if (currentSystem.length > 0) {
-        const totalNat = currentNaturalSum;
-        const isFullLine = currentSystem.length >= userBarsPerLine;
-        const targetLineWidth = isFullLine
-          ? contentWidth
-          : Math.min(contentWidth, Math.max(totalNat, (contentWidth / userBarsPerLine) * currentSystem.length));
+          : Math.min(contentWidth, Math.max(totalNat, (contentWidth / maxBarsPerLine) * currentSystem.length));
 
         let accumulatedWidth = 0;
         currentSystem.forEach((item, itemIdx) => {
@@ -279,7 +216,39 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
         });
 
         sysList.push({ measures: currentSystem });
+        currentSystem = [];
+        currentNaturalSum = 0;
       }
+
+      currentSystem.push({
+        measure: m,
+        width: 0,
+        measureIdx: idx,
+        naturalWidth: natWidth,
+      });
+      currentNaturalSum += natWidth;
+    });
+
+    if (currentSystem.length > 0) {
+      const totalNat = Math.max(1, currentNaturalSum);
+      const prevMeasure = currentSystem[currentSystem.length - 1]?.measure;
+      const isFullLine = currentSystem.length >= maxBarsPerLine || Boolean(prevMeasure?.systemBreak);
+      const targetLineWidth = isFullLine
+        ? contentWidth
+        : Math.min(contentWidth, Math.max(totalNat, (contentWidth / maxBarsPerLine) * currentSystem.length));
+
+      let accumulatedWidth = 0;
+      currentSystem.forEach((item, itemIdx) => {
+        if (itemIdx === currentSystem.length - 1) {
+          item.width = targetLineWidth - accumulatedWidth;
+        } else {
+          const propWidth = Math.round((targetLineWidth * item.naturalWidth) / totalNat);
+          item.width = propWidth;
+          accumulatedWidth += propWidth;
+        }
+      });
+
+      sysList.push({ measures: currentSystem });
     }
 
     return sysList;
@@ -552,6 +521,16 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                 (Pickup @ Beat {pickupBeat})
                               </tspan>
                             )}
+                            {isSelectedMeasure && !isPlaying && (
+                              <tspan
+                                fill="#10b981"
+                                fontSize="9"
+                                fontWeight="bold"
+                                className="print:hidden opacity-90"
+                              >
+                                {' '}▶ Start
+                              </tspan>
+                            )}
                           </text>
 
                           {/* Section Title (Center) */}
@@ -570,32 +549,30 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                             </text>
                           )}
 
-                          {/* Navigation Icon / Hand Template (Right) */}
-                          <g
-                            className="cursor-pointer opacity-70 hover:opacity-100"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (onOpenNavigationPalette) {
-                                onOpenNavigationPalette(measure);
-                              }
-                            }}
-                          >
-                            <text
-                              x={measureX + width - 8}
-                              y={systemY + 14}
-                              fontFamily="'Plus Jakarta Sans', sans-serif"
-                              fontSize="9"
-                              fontWeight="600"
-                              fill="#64748b"
-                              textAnchor="end"
+                          {/* Navigation Jump Indicator (Right) - Never display 'Both' or hand template text */}
+                          {measure.navigationJump && (
+                            <g
+                              className="cursor-pointer opacity-80 hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onOpenNavigationPalette) {
+                                  onOpenNavigationPalette(measure);
+                                }
+                              }}
                             >
-                              {measure.navigationJump
-                                ? measure.navigationJump
-                                : handTemplate === 'Both'
-                                ? 'Both'
-                                : handTemplate}
-                            </text>
-                          </g>
+                              <text
+                                x={measureX + width - 8}
+                                y={systemY + 14}
+                                fontFamily="'Plus Jakarta Sans', sans-serif"
+                                fontSize="9"
+                                fontWeight="600"
+                                fill="#64748b"
+                                textAnchor="end"
+                              >
+                                {measure.navigationJump}
+                              </text>
+                            </g>
+                          )}
 
                           {/* Manual Line Break Indicator (Enter) */}
                           {measure.systemBreak && (
@@ -673,8 +650,8 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                   />
                                 )}
 
-                                {/* Selected Beat Highlight (Soft pill, no harsh borders) */}
-                                {isSelectedBeat && (
+                                {/* Selected Beat / Subdivision Highlight */}
+                                {isSelectedBeat && effVal === 1 && (
                                   <rect
                                     x={colX + 2}
                                     y={systemY + 22}
@@ -682,7 +659,18 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                     height={measureBlockHeight - 34}
                                     rx={4}
                                     fill="#fef3c7"
-                                    fillOpacity="0.55"
+                                    fillOpacity="0.6"
+                                  />
+                                )}
+                                {isSelectedBeat && effVal > 1 && (
+                                  <rect
+                                    x={colX + Math.min(effVal - 1, Math.max(0, selection.subBeatIndex || 0)) * (colWidth / effVal) + 1}
+                                    y={systemY + 22}
+                                    width={colWidth / effVal - 2}
+                                    height={measureBlockHeight - 34}
+                                    rx={4}
+                                    fill="#fef3c7"
+                                    fillOpacity="0.7"
                                   />
                                 )}
 
@@ -783,7 +771,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                   className="cursor-pointer"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (!isLocked) {
+                                    if (!isLocked && effVal === 1) {
                                       onSelectBeat(measure.id, b, 0, 'note');
                                     }
                                   }}
@@ -827,19 +815,16 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                     <g>
                                       {pitches.map((p, pIdx) => {
                                         const count = pitches.length;
-                                        let noteX = colCenterX;
-                                        if (count === 2) {
-                                          noteX =
-                                            colX + (pIdx === 0 ? colWidth * 0.32 : colWidth * 0.68);
-                                        } else if (count === 3) {
-                                          noteX = colX + colWidth * (0.20 + pIdx * 0.30);
-                                        } else if (count === 4) {
-                                          noteX = colX + colWidth * (0.16 + pIdx * 0.22);
-                                        }
+                                        const subWidth = colWidth / count;
+                                        const subX = colX + pIdx * subWidth;
+                                        const noteX = subX + subWidth / 2;
 
                                         const isSubBeatActive =
                                           isSelectedBeat && (selection.subBeatIndex || 0) === pIdx;
                                         const isEmptySub = !p || !p.step;
+                                        const isRestDot = Boolean(p && (p as any).isRest);
+                                        const hasAnyNoteInBeat = rawPitches.some((x) => x && x.step);
+                                        const firstRealNoteIdx = rawPitches.findIndex((x) => x && x.step);
                                         const isHigh = hasOctaveDotAbove(p);
                                         const isLow = hasOctaveDotBelow(p);
 
@@ -854,12 +839,12 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                             }}
                                             className="cursor-pointer"
                                           >
-                                            {/* Transparent click area for this subdivision */}
+                                            {/* Full seamless hit-box for this subdivision */}
                                             <rect
-                                              x={noteX - colWidth / (count * 2)}
-                                              y={systemY + 60}
-                                              width={colWidth / count}
-                                              height={36}
+                                              x={subX}
+                                              y={systemY + 54}
+                                              width={subWidth}
+                                              height={46}
                                               fill="transparent"
                                               className="hover:fill-amber-500/10"
                                             />
@@ -884,24 +869,43 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                               />
                                             )}
 
-                                            {/* Note letter or subdivision dot (e.g. '. B' or 'A .') */}
-                                            <text
-                                              x={noteX}
-                                              y={systemY + 84}
-                                              fontFamily="'Plus Jakarta Sans', sans-serif"
-                                              fontSize={count > 2 ? '14' : count === 2 ? '17' : '18'}
-                                              fontWeight="bold"
-                                              fill={
-                                                isSubBeatActive
-                                                  ? '#b45309'
-                                                  : isEmptySub
-                                                  ? '#94a3b8'
-                                                  : '#000000'
-                                              }
-                                              textAnchor="middle"
-                                            >
-                                              {isEmptySub ? (count > 1 ? '.' : '—') : formatNoteLetter(p)}
-                                            </text>
+                                            {/* Note letter or subdivision dot/dash */}
+                                            {isEmptySub ? (
+                                              <text
+                                                x={noteX}
+                                                y={systemY + 84}
+                                                fontFamily="'Plus Jakarta Sans', sans-serif"
+                                                fontSize={count > 2 ? '14' : count === 2 ? '17' : '18'}
+                                                fontWeight="bold"
+                                                fill={isSubBeatActive ? '#b45309' : '#94a3b8'}
+                                                textAnchor="middle"
+                                              >
+                                                {isRestDot ? '.' : (count > 1 ? '.' : '—')}
+                                              </text>
+                                            ) : (
+                                              <text
+                                                x={noteX}
+                                                y={systemY + 84}
+                                                fontFamily="'Plus Jakarta Sans', sans-serif"
+                                                fontSize={count > 2 ? '14' : count === 2 ? '17' : '18'}
+                                                fontWeight="bold"
+                                                fill={isSubBeatActive ? '#b45309' : '#000000'}
+                                                textAnchor="middle"
+                                              >
+                                                <tspan>{p?.step}</tspan>
+                                                {p?.accidental && p.accidental !== 'natural' && (
+                                                  <tspan
+                                                    fontSize={count > 2 ? '10' : count === 2 ? '12' : '13'}
+                                                    dy={-4}
+                                                    dx={1}
+                                                    fontWeight="semibold"
+                                                    fontFamily="'Plus Jakarta Sans', 'Noto Music', 'Segoe UI Symbol', sans-serif"
+                                                  >
+                                                    {getAccidentalGlyph(p.accidental)}
+                                                  </tspan>
+                                                )}
+                                              </text>
+                                            )}
 
                                             {/* Low Octave: Dot BELOW note */}
                                             {!isEmptySub && isLow && (

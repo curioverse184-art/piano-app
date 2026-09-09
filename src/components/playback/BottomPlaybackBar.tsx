@@ -23,6 +23,7 @@ interface BottomPlaybackBarProps {
   isVirtualPianoOpen: boolean;
   onToggleVirtualPiano: () => void;
   playbackPosition: { measureIndex: number; beat: number } | null;
+  selection?: { measureId?: string; beatIndex?: number; subBeatIndex?: number };
   onOpenMidiModal?: () => void;
   activeOctave?: 'low' | 'middle' | 'high';
   onSetOctave?: (octave: 'low' | 'middle' | 'high') => void;
@@ -34,6 +35,7 @@ export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
   isVirtualPianoOpen,
   onToggleVirtualPiano,
   playbackPosition,
+  selection,
   onOpenMidiModal,
   activeOctave = 'middle',
   onSetOctave,
@@ -44,6 +46,10 @@ export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
   const [accentFirstBeat, setAccentFirstBeat] = useState(audioEngine.getAccentFirstBeat());
   const [showMetronomeSettings, setShowMetronomeSettings] = useState(false);
   const [midiDevices, setMidiDevices] = useState<MidiDevice[]>([]);
+
+  const selectedMeasureIdx = selection?.measureId
+    ? score.measures.findIndex((m) => m.id === selection.measureId)
+    : -1;
 
   useEffect(() => {
     audioEngine.setStateCallback((playing) => {
@@ -64,7 +70,21 @@ export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
     if (isPlaying) {
       audioEngine.pausePlayback();
     } else {
-      audioEngine.playScore(score, playbackPosition?.measureIndex || 0);
+      let mIdx = 0;
+      let bIdx = 0;
+      let subIdx = 0;
+      if (selection?.measureId) {
+        const found = score.measures.findIndex((m) => m.id === selection.measureId);
+        if (found !== -1) {
+          mIdx = found;
+          bIdx = selection.beatIndex !== undefined ? selection.beatIndex : 0;
+          subIdx = selection.subBeatIndex !== undefined ? selection.subBeatIndex : 0;
+        }
+      } else if (playbackPosition) {
+        mIdx = playbackPosition.measureIndex;
+        bIdx = Math.floor(playbackPosition.beat);
+      }
+      audioEngine.playScore(score, mIdx, bIdx, subIdx);
     }
   };
 
@@ -131,10 +151,20 @@ export const BottomPlaybackBar: React.FC<BottomPlaybackBarProps> = ({
         <div className="flex items-center space-x-1.5 px-3 py-1 bg-stone-50 border border-stone-200 rounded-lg text-xs font-mono">
           <span className="text-stone-500">BAR:</span>
           <span className="font-bold text-stone-900">
-            {playbackPosition ? playbackPosition.measureIndex + 1 : 1}
+            {playbackPosition
+              ? playbackPosition.measureIndex + 1
+              : selectedMeasureIdx !== -1
+              ? selectedMeasureIdx + 1
+              : 1}
           </span>
           <span className="text-stone-300">/</span>
           <span className="text-stone-600">{score.measures.length}</span>
+          {!isPlaying && selectedMeasureIdx !== -1 && (
+            <span className="ml-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded text-[10px] font-sans font-semibold border border-emerald-200">
+              Start: Bar {selectedMeasureIdx + 1}, Beat {(selection?.beatIndex ?? 0) + 1}
+              {(selection?.subBeatIndex ?? 0) > 0 ? `.${(selection?.subBeatIndex ?? 0) + 1}` : ''}
+            </span>
+          )}
         </div>
       </div>
 

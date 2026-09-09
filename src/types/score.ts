@@ -250,7 +250,7 @@ export interface SelectionState {
   subBeatIndex?: number; // 0-based note index within beat (for Value 1..4)
   pitchIndex?: number;
   chordSymbolId?: string | null;
-  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'lyrics';
+  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'chord' | 'lyrics' | 'symbol';
 }
 
 export interface PianotasticProject {

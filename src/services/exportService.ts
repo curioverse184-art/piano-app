@@ -629,6 +629,7 @@ export class ExportService {
       </note>\n`);
       } else {
         ev.pitches.forEach((p, pIdx) => {
+          if (!p || !p.step) return;
           const alter = p.accidental === 'sharp' ? 1 : p.accidental === 'flat' ? -1 : 0;
           writer(`      <note>
         ${pIdx > 0 ? '<chord/>' : ''}

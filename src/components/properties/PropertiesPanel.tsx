@@ -124,7 +124,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
     : currentBeatValue;
 
   const activeBeatNotes: Pitch[] = activeMeasure?.beatNotes?.[beatIndex] || [];
-  const activeBeatChord = activeMeasure?.beatChords?.[beatIndex] || '';
+  const fallbackChord = activeMeasure?.chordSymbols?.find(
+    (c) => Math.floor(c.beatOffset) === beatIndex
+  )?.formatted;
+  const activeBeatChord = activeMeasure?.beatChords?.[beatIndex] || fallbackChord || '';
   const activeBeatLyric =
     activeMeasure?.beatLyrics?.[`${beatIndex}_${subBeatIndex}`] ||
     activeMeasure?.beatLyrics?.[beatIndex] ||
@@ -346,6 +349,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <button
                   id="delete-chord-btn"
                   onClick={() => {
+                    setChordInput('');
                     if (activeMeasure && onUpdateBeatChord) {
                       onUpdateBeatChord(activeMeasure.id, beatIndex, '');
                     }
@@ -555,7 +559,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 <span className="text-stone-600 font-medium">Notes in Beat:</span>
                 <span className="font-bold text-stone-900 text-sm">
                   {activeBeatNotes.length > 0
-                    ? activeBeatNotes.map((p) => formatNoteLetter(p)).join(' • ')
+                    ? activeBeatNotes.map((p) => (!p || !p.step ? '.' : formatNoteLetter(p))).join(' • ')
                     : '— (Rest)'}
                 </span>
               </div>

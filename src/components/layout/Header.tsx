@@ -50,6 +50,10 @@ interface HeaderProps {
   isVirtualPianoOpen?: boolean;
   onNavigateHome?: () => void;
   onOpenNewPageModal?: () => void;
+  onSaveProject?: () => void;
+  onOpenSaveAs?: () => void;
+  onOpenProjectLibrary?: () => void;
+  onOpenPrintStudio?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -72,6 +76,10 @@ export const Header: React.FC<HeaderProps> = ({
   isVirtualPianoOpen,
   onNavigateHome,
   onOpenNewPageModal,
+  onSaveProject,
+  onOpenSaveAs,
+  onOpenProjectLibrary,
+  onOpenPrintStudio,
 }) => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -278,37 +286,52 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
                 <div className="my-1 border-t border-stone-100" />
                 <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  Project Storage (.pianotastic)
+                  Project Library (Internal)
                 </div>
                 <button
+                  id="header-open-project-btn"
                   onClick={() => {
-                    fileInputRef.current?.click();
+                    if (onOpenProjectLibrary) {
+                      onOpenProjectLibrary();
+                    } else {
+                      fileInputRef.current?.click();
+                    }
                     setActiveMenu(null);
                   }}
                   className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
                 >
-                  <Upload className="w-3.5 h-3.5 text-stone-500" />
+                  <Upload className="w-3.5 h-3.5 text-amber-600" />
                   <span>Open Project...</span>
                 </button>
                 <button
+                  id="header-save-project-btn"
                   onClick={() => {
-                    handleSaveProject();
+                    if (onSaveProject) {
+                      onSaveProject();
+                    } else {
+                      handleSaveProject();
+                    }
                     setActiveMenu(null);
                   }}
                   className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
                 >
-                  <Save className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Save Project (.pianotastic)</span>
+                  <Save className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Save Project (Internal)</span>
                 </button>
                 <button
+                  id="header-save-as-btn"
                   onClick={() => {
-                    handleSaveAs();
+                    if (onOpenSaveAs) {
+                      onOpenSaveAs();
+                    } else {
+                      handleSaveAs();
+                    }
                     setActiveMenu(null);
                   }}
                   className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
                 >
-                  <Download className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Save As...</span>
+                  <Download className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Save a Copy (Save As)...</span>
                 </button>
                 <button
                   onClick={() => {
@@ -322,7 +345,26 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
                 <div className="my-1 border-t border-stone-100" />
                 <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  Export Document
+                  Print & PDF
+                </div>
+                <button
+                  id="header-print-studio-btn"
+                  onClick={() => {
+                    if (onOpenPrintStudio) {
+                      onOpenPrintStudio();
+                    } else {
+                      ExportService.printScore();
+                    }
+                    setActiveMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-semibold"
+                >
+                  <Printer className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Print / PDF Studio...</span>
+                </button>
+                <div className="my-1 border-t border-stone-100" />
+                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
+                  External File Export
                 </div>
                 <button
                   onClick={() => {
@@ -852,7 +894,13 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Print / PDF button */}
         <button
           id="print-pdf-btn"
-          onClick={() => ExportService.printScore()}
+          onClick={() => {
+            if (onOpenPrintStudio) {
+              onOpenPrintStudio();
+            } else {
+              ExportService.printScore();
+            }
+          }}
           className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-stone-900 text-white text-xs font-medium hover:bg-stone-800 transition-colors shadow-xs"
         >
           <Printer className="w-3.5 h-3.5" />
