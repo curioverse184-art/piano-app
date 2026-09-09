@@ -220,6 +220,24 @@ export interface LayoutSettings {
   zoom: number; // 0.7 to 1.8
 }
 
+export interface ScoreTextAnnotation {
+  id: string;
+  text: string;
+  measureId: string;
+  measureNumber: number;
+  beatIndex?: number; // 0-based beat index within measure
+  subBeatIndex?: number; // 0-based subdivision index
+  placement?: 'above' | 'below' | 'free'; // default 'above'
+  offsetX?: number; // horizontal offset in px
+  offsetY?: number; // vertical offset in px
+  fontSize?: number; // e.g. 10, 12, 14, 16, 18, 20, 24, 32
+  fontWeight?: 'normal' | 'bold';
+  fontStyle?: 'normal' | 'italic';
+  textDecoration?: 'none' | 'underline';
+  textAlign?: 'left' | 'center' | 'right';
+  color?: string;
+}
+
 export interface Score {
   id: string;
   version: string;
@@ -227,6 +245,7 @@ export interface Score {
   layoutSettings: LayoutSettings;
   measures: Measure[];
   learningLayer?: LearningLayerSettings;
+  textAnnotations?: ScoreTextAnnotation[];
 }
 
 export interface SavedProject {
@@ -250,7 +269,8 @@ export interface SelectionState {
   subBeatIndex?: number; // 0-based note index within beat (for Value 1..4)
   pitchIndex?: number;
   chordSymbolId?: string | null;
-  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'chord' | 'lyrics' | 'symbol';
+  textAnnotationId?: string | null;
+  selectionType?: 'score' | 'measure' | 'note' | 'beat' | 'chord_symbol' | 'chord' | 'lyrics' | 'symbol' | 'text';
 }
 
 export interface PianotasticProject {

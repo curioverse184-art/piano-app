@@ -9,6 +9,7 @@ import {
   SelectionState,
   Hand,
   ChordSymbolEvent,
+  ScoreTextAnnotation,
 } from '../../types/score';
 import {
   formatNoteLetter,
@@ -48,6 +49,11 @@ interface NotationRendererProps {
   onUpdateBeatChord?: (measureId: string, beatIndex: number, chord: string) => void;
   onToggleBeatSymbol?: (measureId: string, beatIndex: number, symbol: string) => void;
   onToggleLineBreak?: (measureId: string) => void;
+  onSelectTextAnnotation?: (textId: string) => void;
+  onEditTextAnnotation?: (textAnnotation: ScoreTextAnnotation) => void;
+  onOpenAddTextModal?: (measureId: string, beatIndex: number, placement?: 'above' | 'below') => void;
+  onDeleteTextAnnotation?: (textId: string) => void;
+  onMoveTextAnnotation?: (textId: string, offsetX: number, offsetY: number) => void;
 }
 
 export const NotationRenderer: React.FC<NotationRendererProps> = ({
@@ -63,6 +69,11 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
   onUpdateBeatChord,
   onToggleBeatSymbol,
   onToggleLineBreak,
+  onSelectTextAnnotation,
+  onEditTextAnnotation,
+  onOpenAddTextModal,
+  onDeleteTextAnnotation,
+  onMoveTextAnnotation,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const isPlaying = Boolean(playbackPosition) || audioEngine.getIsPlaying();
@@ -88,21 +99,22 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
   const [chordInputValue, setChordInputValue] = useState('');
   const [lyricInputValue, setLyricInputValue] = useState('');
 
-  // Dimensions & Layout constants
+  // Authentic A4 paper dimensions (210mm x 297mm at standard 96 DPI):
+  // 210 mm = 794 px, 297 mm = 1123 px
   const isLandscape = score.layoutSettings.orientation === 'landscape';
-  const pageWidth = isLandscape ? 1120 : 860;
-  const pageHeight = isLandscape ? 800 : 1160;
+  const pageWidth = isLandscape ? 1123 : 794;
+  const pageHeight = isLandscape ? 794 : 1123;
   const zoom = score.layoutSettings.zoom || 1.0;
 
   const handTemplate = score.metadata.handTemplate || 'Both';
   const pickupBeat = score.metadata.pickupBeat || 1;
 
-  const staffMarginLeft = 40;
-  const staffMarginRight = 40;
-  const contentWidth = pageWidth - staffMarginLeft - staffMarginRight;
+  const staffMarginLeft = 44;
+  const staffMarginRight = 44;
+  const contentWidth = pageWidth - staffMarginLeft - staffMarginRight; // 706px Portrait, 1035px Landscape
 
-  const measureBlockHeight = 140;
-  const systemGap = 36;
+  const measureBlockHeight = 136;
+  const systemGap = 24;
 
   // Helper to find chord for beat
   const getChordForBeat = (measure: Measure, beatIndex: number): string | undefined => {
@@ -166,22 +178,25 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     }
 
     // Left & right barlines, margins
-    contentRequired += 24;
-    const defaultBlankWidth = Math.max(170, totalBeats * baseBeatWidth + 24);
+    contentRequired += 20;
+    const measureLock = score.layoutSettings.measureLockPerLine;
+    const isLocked = measureLock !== null && measureLock !== undefined && measureLock > 0;
+    const targetBars = isLocked ? Math.max(1, Math.round(measureLock)) : (score.layoutSettings.barsPerLine || 4);
+    const minBlankWidth = targetBars >= 6 ? 108 : targetBars === 5 ? 120 : 140;
+    const defaultBlankWidth = Math.max(minBlankWidth, totalBeats * (targetBars >= 6 ? 34 : 40) + 20);
 
     return Math.max(defaultBlankWidth, contentRequired, measure.customWidth || 0);
   };
 
-  // Dynamic Reflow & Measures per system calculation (Honors manual line breaks independently)
-  const systems = useMemo(() => {
+  // Dynamic Reflow & Measures per system calculation (Honors manual line breaks and Measure Lock independently)
+  const { systems, activeLineWidth } = useMemo(() => {
     const sysList: { measures: { measure: Measure; width: number; measureIdx: number; naturalWidth: number }[] }[] = [];
     const measureLock = score.layoutSettings.measureLockPerLine;
+    const isLocked = measureLock !== null && measureLock !== undefined && measureLock > 0;
+    const lockCount = isLocked ? Math.max(1, Math.round(measureLock)) : null;
     const userBarsPerLine =
       score.layoutSettings.barsPerLine || score.layoutSettings.measuresPerSystemAuto || 4;
-    const maxBarsPerLine =
-      measureLock !== null && measureLock !== undefined && measureLock > 0
-        ? Math.max(1, Math.round(measureLock))
-        : Math.max(1, userBarsPerLine);
+    const autoBarsPerLine = Math.max(1, userBarsPerLine);
 
     let currentSystem: { measure: Measure; width: number; measureIdx: number; naturalWidth: number }[] = [];
     let currentNaturalSum = 0;
@@ -191,30 +206,23 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
       const prevMeasure = currentSystem.length > 0 ? currentSystem[currentSystem.length - 1].measure : null;
       const prevHadManualBreak = prevMeasure ? Boolean(prevMeasure.systemBreak) : false;
 
-      const wouldExceedBars = currentSystem.length >= maxBarsPerLine;
-      const wouldOverflowWidth = currentSystem.length > 0 && currentNaturalSum + natWidth > contentWidth;
-
-      // Break if previous measure explicitly requested a systemBreak, or maxBars exceeded, or line would overflow
-      const shouldBreak = prevHadManualBreak || wouldExceedBars || wouldOverflowWidth;
+      let shouldBreak = false;
+      if (currentSystem.length > 0) {
+        if (prevHadManualBreak) {
+          // Manual line break placed on previous measure has local priority
+          shouldBreak = true;
+        } else if (isLocked && lockCount) {
+          // Fixed lock per line: break when reached lockCount
+          shouldBreak = currentSystem.length >= lockCount;
+        } else {
+          // Off: responsive reflow based on width and barsPerLine
+          const wouldExceedBars = currentSystem.length >= autoBarsPerLine;
+          const wouldOverflowWidth = currentNaturalSum + natWidth > contentWidth;
+          shouldBreak = wouldExceedBars || wouldOverflowWidth;
+        }
+      }
 
       if (currentSystem.length > 0 && shouldBreak) {
-        const totalNat = Math.max(1, currentNaturalSum);
-        const isFullLine = currentSystem.length >= maxBarsPerLine || wouldOverflowWidth || prevHadManualBreak;
-        const targetLineWidth = isFullLine
-          ? contentWidth
-          : Math.min(contentWidth, Math.max(totalNat, (contentWidth / maxBarsPerLine) * currentSystem.length));
-
-        let accumulatedWidth = 0;
-        currentSystem.forEach((item, itemIdx) => {
-          if (itemIdx === currentSystem.length - 1) {
-            item.width = targetLineWidth - accumulatedWidth;
-          } else {
-            const propWidth = Math.round((targetLineWidth * item.naturalWidth) / totalNat);
-            item.width = propWidth;
-            accumulatedWidth += propWidth;
-          }
-        });
-
         sysList.push({ measures: currentSystem });
         currentSystem = [];
         currentNaturalSum = 0;
@@ -230,16 +238,23 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     });
 
     if (currentSystem.length > 0) {
-      const totalNat = Math.max(1, currentNaturalSum);
-      const prevMeasure = currentSystem[currentSystem.length - 1]?.measure;
-      const isFullLine = currentSystem.length >= maxBarsPerLine || Boolean(prevMeasure?.systemBreak);
+      sysList.push({ measures: currentSystem });
+    }
+
+    // Justify systems strictly across contentWidth (fixed A4 printable width)
+    sysList.forEach((sys) => {
+      const totalNat = Math.max(1, sys.measures.reduce((acc, it) => acc + it.naturalWidth, 0));
+      const targetCount = isLocked && lockCount ? lockCount : autoBarsPerLine;
+      const prevMeasure = sys.measures[sys.measures.length - 1]?.measure;
+      const isFullLine = sys.measures.length >= targetCount || Boolean(prevMeasure?.systemBreak);
+
       const targetLineWidth = isFullLine
         ? contentWidth
-        : Math.min(contentWidth, Math.max(totalNat, (contentWidth / maxBarsPerLine) * currentSystem.length));
+        : Math.min(contentWidth, Math.max(totalNat, (contentWidth / targetCount) * sys.measures.length));
 
       let accumulatedWidth = 0;
-      currentSystem.forEach((item, itemIdx) => {
-        if (itemIdx === currentSystem.length - 1) {
+      sys.measures.forEach((item, itemIdx) => {
+        if (itemIdx === sys.measures.length - 1) {
           item.width = targetLineWidth - accumulatedWidth;
         } else {
           const propWidth = Math.round((targetLineWidth * item.naturalWidth) / totalNat);
@@ -247,11 +262,9 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
           accumulatedWidth += propWidth;
         }
       });
+    });
 
-      sysList.push({ measures: currentSystem });
-    }
-
-    return sysList;
+    return { systems: sysList, activeLineWidth: contentWidth };
   }, [
     score.measures,
     score.layoutSettings.barsPerLine,
@@ -262,26 +275,49 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     handTemplate,
   ]);
 
-  // Group systems into pages
+  // Group systems into exact A4 pages based on vertical height
   const pages = useMemo(() => {
-    const systemsPerPage = isLandscape ? 4 : 5;
-    const pageList: typeof systems[] = [];
-    let curPage: typeof systems = [];
+    const pageList: { systems: typeof systems; startY: number }[] = [];
+    let curPageSystems: typeof systems = [];
+    const firstPageStartY = 145;
+    const subsequentPageStartY = 50;
+    const bottomPrintableMargin = pageHeight - 48; // Leave margin for footer at bottom
+    let currentY = firstPageStartY;
 
     systems.forEach((sys) => {
-      const hasPageBreak = sys.measures.some((m) => m.measure.pageBreak);
-      curPage.push(sys);
-      if (curPage.length >= systemsPerPage || hasPageBreak) {
-        pageList.push(curPage);
-        curPage = [];
+      const sysSpan = measureBlockHeight + systemGap;
+      const prevSystem = curPageSystems.length > 0 ? curPageSystems[curPageSystems.length - 1] : null;
+      const prevHadPageBreak = prevSystem
+        ? prevSystem.measures.some((m) => m.measure.pageBreak)
+        : false;
+
+      // Check if adding this system would overflow the printable height of the A4 page
+      const wouldOverflowPage = currentY + sysSpan > bottomPrintableMargin;
+
+      if (curPageSystems.length > 0 && (wouldOverflowPage || prevHadPageBreak)) {
+        pageList.push({
+          systems: curPageSystems,
+          startY: pageList.length === 0 ? firstPageStartY : subsequentPageStartY,
+        });
+        curPageSystems = [];
+        currentY = subsequentPageStartY;
       }
+
+      curPageSystems.push(sys);
+      currentY += sysSpan;
     });
 
-    if (curPage.length > 0) {
-      pageList.push(curPage);
+    if (curPageSystems.length > 0) {
+      pageList.push({
+        systems: curPageSystems,
+        startY: pageList.length === 0 ? firstPageStartY : subsequentPageStartY,
+      });
     }
-    return pageList;
-  }, [systems, isLandscape]);
+
+    return pageList.length > 0
+      ? pageList
+      : [{ systems: [], startY: firstPageStartY }];
+  }, [systems, pageHeight, measureBlockHeight, systemGap]);
 
   const quickChordPresets = ['C', 'Am', 'F', 'G7', 'Dm', 'Cmaj7', 'Em', 'A7', 'G', 'D'];
 
@@ -289,51 +325,97 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
     <div
       ref={containerRef}
       id="notation-canvas-container"
-      className="min-w-fit w-full flex flex-col items-center select-none pt-6 px-8 pb-48 space-y-8 relative min-h-full"
+      className="min-w-fit w-full flex flex-col items-center select-none pt-6 px-8 pb-48 space-y-10 relative min-h-full"
       style={{
         transform: zoom !== 1 ? `scale(${zoom})` : undefined,
         transformOrigin: 'top center',
         marginBottom: zoom > 1 ? `${(zoom - 1) * 800}px` : undefined,
       }}
     >
-      {pages.map((pageSystems, pageIndex) => {
-        const startY = pageIndex === 0 ? 150 : 50;
-        const totalSystemSpan = pageSystems.length * (measureBlockHeight + systemGap);
-        const dynamicPageHeight = Math.max(pageHeight, startY + totalSystemSpan + 60);
-
+      {pages.map((pageData, pageIndex) => {
+        const pageSystems = pageData.systems;
+        const startY = pageData.startY;
         let currentSystemY = startY;
 
         return (
           <div
             key={`page-${pageIndex}`}
-            className="score-page bg-white shadow-md border border-stone-300 rounded-sm relative shrink-0"
-            style={{
-              width: `${pageWidth}px`,
-              minHeight: `${dynamicPageHeight}px`,
-              height: `${dynamicPageHeight}px`,
-            }}
+            className="flex flex-col items-center group/page"
           >
-            <svg
-              width={pageWidth}
-              height={dynamicPageHeight}
-              viewBox={`0 0 ${pageWidth} ${dynamicPageHeight}`}
-              className="w-full h-full block"
+            {/* Page number badge indicator */}
+            <div className="mb-2 px-3 py-0.5 rounded-full bg-stone-300/80 text-stone-700 text-[11px] font-medium tracking-wide flex items-center space-x-1.5 shadow-xs">
+              <span>Page {pageIndex + 1} of {pages.length}</span>
+              <span className="text-stone-400">•</span>
+              <span className="uppercase text-[10px] text-stone-500 font-semibold">{isLandscape ? 'A4 Landscape' : 'A4 Portrait'}</span>
+            </div>
+
+            {/* Authentic A4 Paper Sheet */}
+            <div
+              id={`a4-page-${pageIndex + 1}`}
+              className="score-page a4-paper-sheet bg-white shadow-[0_4px_24px_rgba(0,0,0,0.12),0_1px_4px_rgba(0,0,0,0.06)] border border-stone-200/90 rounded-[2px] relative shrink-0 transition-shadow hover:shadow-[0_8px_32px_rgba(0,0,0,0.16)] overflow-hidden"
+              style={{
+                width: `${pageWidth}px`,
+                height: `${pageHeight}px`,
+                minWidth: `${pageWidth}px`,
+                minHeight: `${pageHeight}px`,
+                maxWidth: `${pageWidth}px`,
+                maxHeight: `${pageHeight}px`,
+              }}
             >
-              {/* Score Header on First Page */}
-              {pageIndex === 0 && (
-                <g className="score-header">
-                  {/* Score Title */}
-                  <text
-                    x={pageWidth / 2}
-                    y={56}
-                    fontFamily="'Lora', Georgia, serif"
-                    fontSize="26"
-                    fontWeight="bold"
-                    fill="#0f172a"
-                    textAnchor="middle"
-                  >
-                    {score.metadata.title || 'Untitled Notation'}
-                  </text>
+              <svg
+                width={pageWidth}
+                height={pageHeight}
+                viewBox={`0 0 ${pageWidth} ${pageHeight}`}
+                className="w-full h-full block"
+              >
+                {/* Score Running Header on subsequent pages */}
+                {pageIndex > 0 && (
+                  <g className="score-running-header">
+                    <text
+                      x={staffMarginLeft}
+                      y={28}
+                      fontFamily="'Plus Jakarta Sans', sans-serif"
+                      fontSize="10"
+                      fill="#64748b"
+                    >
+                      {score.metadata.title || 'Untitled Notation'}
+                    </text>
+                    <text
+                      x={pageWidth - staffMarginRight}
+                      y={28}
+                      fontFamily="'Plus Jakarta Sans', sans-serif"
+                      fontSize="10"
+                      fill="#64748b"
+                      textAnchor="end"
+                    >
+                      {score.metadata.composer || ''}
+                    </text>
+                    <line
+                      x1={staffMarginLeft}
+                      y1={34}
+                      x2={pageWidth - staffMarginRight}
+                      y2={34}
+                      stroke="#f1f5f9"
+                      strokeWidth="1"
+                    />
+                  </g>
+                )}
+
+                {/* Score Header on First Page */}
+                {pageIndex === 0 && (
+                  <g className="score-header">
+                    {/* Score Title */}
+                    <text
+                      x={pageWidth / 2}
+                      y={56}
+                      fontFamily="'Lora', Georgia, serif"
+                      fontSize="26"
+                      fontWeight="bold"
+                      fill="#0f172a"
+                      textAnchor="middle"
+                    >
+                      {score.metadata.title || 'Untitled Notation'}
+                    </text>
 
                   {/* Subtitle */}
                   {score.metadata.subtitle && (
@@ -483,13 +565,25 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                           {/* Pure Sheet Music Measure Surface (No boxes/borders, transparent click target) */}
                           <rect
                             x={measureX}
-                            y={systemY}
+                            y={systemY - 20}
                             width={width}
-                            height={measureBlockHeight}
+                            height={measureBlockHeight + 40}
                             fill={isSelectedMeasure ? '#f8fafc' : 'transparent'}
                             fillOpacity={isSelectedMeasure ? '0.75' : '0'}
-                            className="cursor-pointer"
-                            onClick={() => onSelectMeasure(measure.id)}
+                            className={toolMode === 'text' ? 'cursor-text' : 'cursor-pointer'}
+                            onClick={(e) => {
+                              if (toolMode === 'text') {
+                                e.stopPropagation();
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const relX = (e.clientX - rect.left) / zoom;
+                                const b = Math.min(totalBeats - 1, Math.max(0, Math.floor(relX / colWidth)));
+                                const relY = (e.clientY - rect.top) / zoom;
+                                const isAbove = relY < (measureBlockHeight + 40) / 2;
+                                onOpenAddTextModal?.(measure.id, b, isAbove ? 'above' : 'below');
+                                return;
+                              }
+                              onSelectMeasure(measure.id);
+                            }}
                           />
 
                           {/* Left Barline (Start of System) */}
@@ -691,6 +785,10 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                   className="cursor-pointer group/chord"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (toolMode === 'text') {
+                                      onOpenAddTextModal?.(measure.id, b, 'above');
+                                      return;
+                                    }
                                     if (!isLocked) {
                                       onSelectBeat(measure.id, b, 0, 'chord');
                                       const rect = e.currentTarget.getBoundingClientRect();
@@ -833,6 +931,10 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                             key={`p-${pIdx}`}
                                             onClick={(e) => {
                                               e.stopPropagation();
+                                              if (toolMode === 'text') {
+                                                onOpenAddTextModal?.(measure.id, b, 'above');
+                                                return;
+                                              }
                                               if (!isLocked) {
                                                 onSelectBeat(measure.id, b, pIdx, 'note');
                                               }
@@ -981,6 +1083,10 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                   className="cursor-pointer group/lyric"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (toolMode === 'text') {
+                                      onOpenAddTextModal?.(measure.id, b, 'below');
+                                      return;
+                                    }
                                     if (!isLocked) {
                                       onSelectBeat(measure.id, b, 0, 'lyrics');
                                       const rect = e.currentTarget.getBoundingClientRect();
@@ -1164,6 +1270,154 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                               />
                             </g>
                           )}
+
+                          {/* Free-form Score Text Annotations for this measure */}
+                          {(score.textAnnotations || [])
+                            .filter(
+                              (t) => t.measureId === measure.id || t.measureNumber === measure.measureNumber
+                            )
+                            .map((textObj) => {
+                              const isSelected =
+                                selection.textAnnotationId === textObj.id ||
+                                (selection.selectionType === 'text' && selection.eventId === textObj.id);
+                              const anchorBeat = textObj.beatIndex !== undefined ? textObj.beatIndex : 0;
+                              const anchorX = measureX + anchorBeat * colWidth + (textObj.offsetX || 0);
+
+                              let baseY = systemY - 8 + (textObj.offsetY || 0);
+                              if (textObj.placement === 'below') {
+                                baseY = systemY + measureBlockHeight + 18 + (textObj.offsetY || 0);
+                              } else if (textObj.placement === 'free') {
+                                baseY = systemY + 30 + (textObj.offsetY || 0);
+                              }
+
+                              const fontSize = textObj.fontSize || 14;
+                              const isBold = textObj.fontWeight === 'bold';
+                              const isItalic = textObj.fontStyle === 'italic';
+                              const isUnderline = textObj.textDecoration === 'underline';
+                              const textAnchor =
+                                textObj.textAlign === 'center'
+                                  ? 'middle'
+                                  : textObj.textAlign === 'right'
+                                  ? 'end'
+                                  : 'start';
+                              const textColor = textObj.color || '#0f172a';
+
+                              const approxWidth = Math.max(28, textObj.text.length * fontSize * 0.62 + 10);
+                              const approxHeight = fontSize + 6;
+                              const boxX =
+                                textAnchor === 'middle'
+                                  ? anchorX - approxWidth / 2
+                                  : textAnchor === 'end'
+                                  ? anchorX - approxWidth + 4
+                                  : anchorX - 4;
+                              const boxY = baseY - fontSize;
+
+                              return (
+                                <g
+                                  key={textObj.id}
+                                  id={`score-text-${textObj.id}`}
+                                  className="score-text-annotation cursor-pointer select-none group"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (toolMode === 'eraser') {
+                                      onDeleteTextAnnotation?.(textObj.id);
+                                    } else {
+                                      onSelectTextAnnotation?.(textObj.id);
+                                    }
+                                  }}
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    onEditTextAnnotation?.(textObj);
+                                  }}
+                                  onMouseDown={(e) => {
+                                    if (toolMode === 'eraser') return;
+                                    e.stopPropagation();
+                                    onSelectTextAnnotation?.(textObj.id);
+
+                                    const startX = e.clientX;
+                                    const startY = e.clientY;
+                                    const initOffsetX = textObj.offsetX || 0;
+                                    const initOffsetY = textObj.offsetY || 0;
+                                    let dragged = false;
+
+                                    const onMouseMove = (moveEvt: MouseEvent) => {
+                                      const dx = (moveEvt.clientX - startX) / zoom;
+                                      const dy = (moveEvt.clientY - startY) / zoom;
+                                      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                                        dragged = true;
+                                      }
+                                      if (dragged && onMoveTextAnnotation) {
+                                        onMoveTextAnnotation(
+                                          textObj.id,
+                                          Math.round(initOffsetX + dx),
+                                          Math.round(initOffsetY + dy)
+                                        );
+                                      }
+                                    };
+
+                                    const onMouseUp = () => {
+                                      window.removeEventListener('mousemove', onMouseMove);
+                                      window.removeEventListener('mouseup', onMouseUp);
+                                    };
+
+                                    window.addEventListener('mousemove', onMouseMove);
+                                    window.addEventListener('mouseup', onMouseUp);
+                                  }}
+                                >
+                                  {/* Selection Bounding Box */}
+                                  {isSelected && (
+                                    <g className="print:hidden">
+                                      <rect
+                                        x={boxX}
+                                        y={boxY}
+                                        width={approxWidth}
+                                        height={approxHeight}
+                                        fill="#eff6ff"
+                                        fillOpacity="0.6"
+                                        stroke="#2563eb"
+                                        strokeWidth="1.5"
+                                        strokeDasharray="3 2"
+                                        rx={3}
+                                      />
+                                      {/* Corner handles */}
+                                      <rect x={boxX - 2} y={boxY - 2} width={4} height={4} fill="#2563eb" />
+                                      <rect x={boxX + approxWidth - 2} y={boxY - 2} width={4} height={4} fill="#2563eb" />
+                                      <rect x={boxX - 2} y={boxY + approxHeight - 2} width={4} height={4} fill="#2563eb" />
+                                      <rect x={boxX + approxWidth - 2} y={boxY + approxHeight - 2} width={4} height={4} fill="#2563eb" />
+                                    </g>
+                                  )}
+
+                                  {/* Hover Bounding Box */}
+                                  {!isSelected && (
+                                    <rect
+                                      x={boxX}
+                                      y={boxY}
+                                      width={approxWidth}
+                                      height={approxHeight}
+                                      fill="transparent"
+                                      className="group-hover:stroke-blue-400 group-hover:stroke-dashed group-hover:stroke-[1px] print:hidden"
+                                      rx={3}
+                                    />
+                                  )}
+
+                                  {/* Rendered Text */}
+                                  <text
+                                    x={anchorX}
+                                    y={baseY}
+                                    fontFamily="'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif"
+                                    fontSize={fontSize}
+                                    fontWeight={isBold ? 'bold' : 'normal'}
+                                    fontStyle={isItalic ? 'italic' : 'normal'}
+                                    textDecoration={isUnderline ? 'underline' : 'none'}
+                                    textAnchor={textAnchor}
+                                    fill={textColor}
+                                    className="pointer-events-none"
+                                  >
+                                    {textObj.text}
+                                  </text>
+                                </g>
+                              );
+                            })}
                         </g>
                       );
                     })}
@@ -1175,15 +1429,15 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
               <g className="score-footer">
                 <line
                   x1={staffMarginLeft}
-                  y1={pageHeight - 36}
+                  y1={pageHeight - 34}
                   x2={pageWidth - staffMarginRight}
-                  y2={pageHeight - 36}
+                  y2={pageHeight - 34}
                   stroke="#e2e8f0"
                   strokeWidth="1"
                 />
                 <text
                   x={staffMarginLeft}
-                  y={pageHeight - 20}
+                  y={pageHeight - 18}
                   fontFamily="'Plus Jakarta Sans', sans-serif"
                   fontSize="10"
                   fill="#94a3b8"
@@ -1191,8 +1445,18 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                   {score.metadata.copyright || '© Pianotastic Academy'}
                 </text>
                 <text
+                  x={pageWidth / 2}
+                  y={pageHeight - 18}
+                  fontFamily="'Plus Jakarta Sans', sans-serif"
+                  fontSize="9"
+                  fill="#cbd5e1"
+                  textAnchor="middle"
+                >
+                  Pianotastic Sheet Music
+                </text>
+                <text
                   x={pageWidth - staffMarginRight}
-                  y={pageHeight - 20}
+                  y={pageHeight - 18}
                   fontFamily="'Plus Jakarta Sans', sans-serif"
                   fontSize="10"
                   fill="#94a3b8"
@@ -1203,8 +1467,9 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
               </g>
             </svg>
           </div>
-        );
-      })}
+        </div>
+      );
+    })}
 
       {/* ================= INLINE CHORD ENTRY POPOVER ================= */}
       {activeChordPopover && (

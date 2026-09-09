@@ -54,6 +54,7 @@ interface HeaderProps {
   onOpenSaveAs?: () => void;
   onOpenProjectLibrary?: () => void;
   onOpenPrintStudio?: () => void;
+  onChangeTimeSignature?: (ts: TimeSignature) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -69,6 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenShortcuts,
   onResetScore,
   onOpenCustomTimeSignature,
+  onChangeTimeSignature,
   onOpenChordDialog,
   onAddMeasure,
   onResetLayout,
@@ -217,77 +219,21 @@ export const Header: React.FC<HeaderProps> = ({
                 className="absolute left-0 top-full mt-1 w-56 bg-white border border-stone-200 rounded-lg shadow-lg py-1.5 z-50 text-xs text-stone-800 font-sans"
                 onMouseLeave={() => setActiveMenu(null)}
               >
-                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  New & Home
-                </div>
-                {onOpenNewPageModal && (
-                  <button
-                    onClick={() => {
+                <button
+                  id="header-new-project-btn"
+                  onClick={() => {
+                    if (onOpenNewPageModal) {
                       onOpenNewPageModal();
-                      setActiveMenu(null);
-                    }}
-                    className="w-full px-3 py-1.5 text-left hover:bg-amber-50 text-amber-900 font-semibold flex items-center justify-between"
-                  >
-                    <span className="flex items-center space-x-1.5">
-                      <Plus className="w-3.5 h-3.5 text-amber-600" />
-                      <span>New Page (Templates)...</span>
-                    </span>
-                    <span className="text-[10px] text-amber-700">Setup</span>
-                  </button>
-                )}
-                {onNavigateHome && (
-                  <button
-                    onClick={() => {
-                      onNavigateHome();
-                      setActiveMenu(null);
-                    }}
-                    className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-1.5 text-stone-700"
-                  >
-                    <Home className="w-3.5 h-3.5 text-stone-500" />
-                    <span>Projects Home</span>
-                  </button>
-                )}
-                <div className="my-1 border-t border-stone-100" />
-                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  Presets & Samples
-                </div>
-                <button
-                  onClick={() => {
-                    onResetScore('blank');
+                    } else {
+                      onResetScore('blank');
+                    }
                     setActiveMenu(null);
-                    showToast('Created Blank Piano Score');
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-medium"
                 >
-                  <span>Blank Piano Score</span>
-                  <span className="text-[10px] text-stone-600">Grand Staff</span>
+                  <Plus className="w-3.5 h-3.5 text-stone-600" />
+                  <span>New Project</span>
                 </button>
-                <button
-                  onClick={() => {
-                    onResetScore('etude');
-                    setActiveMenu(null);
-                    showToast('Loaded Pianotastic Étude in C');
-                  }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between"
-                >
-                  <span>Pianotastic Étude in C</span>
-                  <span className="text-[10px] text-stone-600">Sample</span>
-                </button>
-                <button
-                  onClick={() => {
-                    onResetScore('twinkle');
-                    setActiveMenu(null);
-                    showToast('Loaded Twinkle Little Star');
-                  }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between"
-                >
-                  <span>Twinkle Little Star</span>
-                  <span className="text-[10px] text-stone-600">Sample</span>
-                </button>
-                <div className="my-1 border-t border-stone-100" />
-                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  Project Library (Internal)
-                </div>
                 <button
                   id="header-open-project-btn"
                   onClick={() => {
@@ -298,9 +244,9 @@ export const Header: React.FC<HeaderProps> = ({
                     }
                     setActiveMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-medium"
                 >
-                  <Upload className="w-3.5 h-3.5 text-amber-600" />
+                  <Upload className="w-3.5 h-3.5 text-stone-600" />
                   <span>Open Project...</span>
                 </button>
                 <button
@@ -313,10 +259,10 @@ export const Header: React.FC<HeaderProps> = ({
                     }
                     setActiveMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-medium"
                 >
-                  <Save className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Save Project (Internal)</span>
+                  <Save className="w-3.5 h-3.5 text-stone-600" />
+                  <span>Save Project</span>
                 </button>
                 <button
                   id="header-save-as-btn"
@@ -328,25 +274,11 @@ export const Header: React.FC<HeaderProps> = ({
                     }
                     setActiveMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-medium"
                 >
-                  <Download className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Save a Copy (Save As)...</span>
+                  <Download className="w-3.5 h-3.5 text-stone-600" />
+                  <span>Save As...</span>
                 </button>
-                <button
-                  onClick={() => {
-                    handleRevertAutosave();
-                    setActiveMenu(null);
-                  }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-700"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Revert to Autosave</span>
-                </button>
-                <div className="my-1 border-t border-stone-100" />
-                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
-                  Print & PDF
-                </div>
                 <button
                   id="header-print-studio-btn"
                   onClick={() => {
@@ -357,10 +289,58 @@ export const Header: React.FC<HeaderProps> = ({
                     }
                     setActiveMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-semibold"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-900 font-medium"
                 >
-                  <Printer className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Print / PDF Studio...</span>
+                  <Printer className="w-3.5 h-3.5 text-stone-600" />
+                  <span>Print / PDF</span>
+                </button>
+
+                <div className="my-1 border-t border-stone-100" />
+                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-500">
+                  Samples & Revert
+                </div>
+                <button
+                  onClick={() => {
+                    onResetScore('blank');
+                    setActiveMenu(null);
+                    showToast('Created Blank Piano Score');
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between text-stone-700"
+                >
+                  <span>Blank Piano Score</span>
+                  <span className="text-[10px] text-stone-400">Grand Staff</span>
+                </button>
+                <button
+                  onClick={() => {
+                    onResetScore('etude');
+                    setActiveMenu(null);
+                    showToast('Loaded Pianotastic Étude in C');
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between text-stone-700"
+                >
+                  <span>Pianotastic Étude in C</span>
+                  <span className="text-[10px] text-stone-400">Sample</span>
+                </button>
+                <button
+                  onClick={() => {
+                    onResetScore('twinkle');
+                    setActiveMenu(null);
+                    showToast('Loaded Twinkle Little Star');
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between text-stone-700"
+                >
+                  <span>Twinkle Little Star</span>
+                  <span className="text-[10px] text-stone-400">Sample</span>
+                </button>
+                <button
+                  onClick={() => {
+                    handleRevertAutosave();
+                    setActiveMenu(null);
+                  }}
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-600"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-stone-400" />
+                  <span>Revert to Autosave</span>
                 </button>
                 <div className="my-1 border-t border-stone-100" />
                 <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-600">
@@ -679,36 +659,76 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
             {activeMenu === 'score' && (
               <div
-                className="absolute left-0 top-full mt-1 w-52 bg-white border border-stone-200 rounded-lg shadow-lg py-1.5 z-50 text-xs font-sans text-stone-800"
+                className="absolute left-0 top-full mt-1 w-56 bg-white border border-stone-200 rounded-lg shadow-lg py-1.5 z-50 text-xs font-sans text-stone-800"
                 onMouseLeave={() => setActiveMenu(null)}
               >
                 <button
+                  id="score-add-measure-btn"
                   onClick={() => {
                     onAddMeasure?.();
                     setActiveMenu(null);
-                    showToast('Added Measure');
+                    showToast('Added Measure at End');
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 font-medium text-stone-900"
                 >
                   <PlusCircle className="w-3.5 h-3.5 text-stone-600" />
                   <span>Add Measure at End</span>
                 </button>
+
+                <div className="my-1 border-t border-stone-100" />
+                <div className="px-3 py-1 text-[10px] uppercase font-semibold text-stone-500">
+                  Time Signature
+                </div>
+                {[
+                  { num: 2, den: 4, label: '2/4' },
+                  { num: 3, den: 4, label: '3/4' },
+                  { num: 4, den: 4, label: '4/4' },
+                  { num: 5, den: 4, label: '5/4' },
+                  { num: 6, den: 8, label: '6/8' },
+                  { num: 7, den: 8, label: '7/8' },
+                  { num: 9, den: 8, label: '9/8' },
+                  { num: 12, den: 8, label: '12/8' },
+                ].map((item) => {
+                  const isActive =
+                    score.metadata.initialTimeSignature.numerator === item.num &&
+                    score.metadata.initialTimeSignature.denominator === item.den;
+                  return (
+                    <button
+                      key={item.label}
+                      onClick={() => {
+                        onChangeTimeSignature?.({ numerator: item.num, denominator: item.den });
+                        setActiveMenu(null);
+                        showToast(`Time Signature set to ${item.label}`);
+                      }}
+                      className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between"
+                    >
+                      <span className={isActive ? 'font-semibold text-amber-700' : 'text-stone-700'}>
+                        {item.label}
+                      </span>
+                      {isActive && <Check className="w-3.5 h-3.5 text-amber-700" />}
+                    </button>
+                  );
+                })}
                 <button
                   onClick={() => {
                     onOpenCustomTimeSignature?.();
                     setActiveMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center justify-between text-stone-600 border-t border-stone-50"
                 >
-                  <Clock className="w-3.5 h-3.5 text-stone-600" />
-                  <span>Time Signature...</span>
+                  <span className="flex items-center space-x-1.5">
+                    <Clock className="w-3.5 h-3.5 text-stone-500" />
+                    <span>Custom Time Signature...</span>
+                  </span>
                 </button>
+
+                <div className="my-1 border-t border-stone-100" />
                 <button
                   onClick={() => {
                     onOpenChordDialog?.();
                     setActiveMenu(null);
                   }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2"
+                  className="w-full px-3 py-1.5 text-left hover:bg-stone-50 flex items-center space-x-2 text-stone-700"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-amber-600" />
                   <span>Lead Sheet Chord Symbol...</span>

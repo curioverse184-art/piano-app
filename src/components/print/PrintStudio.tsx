@@ -22,9 +22,11 @@ interface PrintStudioProps {
 }
 
 export const PrintStudio: React.FC<PrintStudioProps> = ({ score, onBackToEditor }) => {
-  // Settings State
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
-  const [paperSize, setPaperSize] = useState<'letter' | 'a4' | 'legal'>('letter');
+  // Settings State - Default to A4 and score's orientation
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(
+    score.layoutSettings.orientation || 'portrait'
+  );
+  const [paperSize, setPaperSize] = useState<'letter' | 'a4' | 'legal'>('a4');
   const [margins, setMargins] = useState<'normal' | 'narrow' | 'wide'>('normal');
   const [scale, setScale] = useState<number>(100);
   const [overrideBarsPerLine, setOverrideBarsPerLine] = useState<number | null>(null);
@@ -33,6 +35,7 @@ export const PrintStudio: React.FC<PrintStudioProps> = ({ score, onBackToEditor 
   const [showTitleHeader, setShowTitleHeader] = useState<boolean>(true);
   const [showChordSymbols, setShowChordSymbols] = useState<boolean>(true);
   const [showLyrics, setShowLyrics] = useState<boolean>(true);
+  const [showTextAnnotations, setShowTextAnnotations] = useState<boolean>(true);
   const [showBarNumbers, setShowBarNumbers] = useState<boolean>(true);
   const [showFooter, setShowFooter] = useState<boolean>(true);
 
@@ -45,13 +48,18 @@ export const PrintStudio: React.FC<PrintStudioProps> = ({ score, onBackToEditor 
   const printScore = useMemo<Score>(() => {
     return {
       ...score,
+      textAnnotations: showTextAnnotations ? score.textAnnotations : [],
       layoutSettings: {
         ...score.layoutSettings,
         barsPerLine: overrideBarsPerLine || score.layoutSettings.barsPerLine || 4,
         measuresPerSystemAuto: overrideBarsPerLine || score.layoutSettings.measuresPerSystemAuto || 4,
+        measureLockPerLine:
+          overrideBarsPerLine !== null
+            ? overrideBarsPerLine
+            : score.layoutSettings.measureLockPerLine,
       },
     };
-  }, [score, overrideBarsPerLine]);
+  }, [score, overrideBarsPerLine, showTextAnnotations]);
 
   // Execute system print
   const handlePrint = () => {
@@ -277,6 +285,16 @@ export const PrintStudio: React.FC<PrintStudioProps> = ({ score, onBackToEditor 
                 className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600"
               />
               <span className="font-medium text-stone-700">Song Lyrics</span>
+            </label>
+
+            <label className="flex items-center space-x-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showTextAnnotations}
+                onChange={(e) => setShowTextAnnotations(e.target.checked)}
+                className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600"
+              />
+              <span className="font-medium text-stone-700">Score Text Annotations</span>
             </label>
 
             <label className="flex items-center space-x-2 cursor-pointer select-none">

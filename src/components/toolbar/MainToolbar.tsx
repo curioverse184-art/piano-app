@@ -9,13 +9,13 @@ import {
   Layers,
   Type,
   Repeat,
+  Baseline,
   Sliders,
-  Sparkles,
 } from 'lucide-react';
 
 interface MainToolbarProps {
-  toolMode: ToolMode;
-  onSetToolMode: (mode: ToolMode) => void;
+  toolMode?: ToolMode;
+  onSetToolMode?: (mode: ToolMode) => void;
   selectedDuration?: NoteDuration;
   onSetDuration?: (dur: NoteDuration) => void;
   isDotted?: boolean;
@@ -32,7 +32,7 @@ interface MainToolbarProps {
 }
 
 export const MainToolbar: React.FC<MainToolbarProps> = ({
-  toolMode,
+  toolMode = 'select',
   onSetToolMode,
   selectedAccidental,
   onSetAccidental,
@@ -59,6 +59,7 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
       shortcut: 'S',
     },
     { id: 'navigation', label: 'Navigation', icon: <Repeat className="w-3.5 h-3.5" />, shortcut: 'G' },
+    { id: 'text', label: 'Text', icon: <Baseline className="w-3.5 h-3.5" />, shortcut: 'X' },
   ];
 
   const accidentals: { id: AccidentalType | null; label: string; glyph: string }[] = [
@@ -75,56 +76,62 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
       id="main-toolbar"
       className="w-full bg-stone-50 border-b border-stone-200 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs z-20 select-none print:hidden shadow-2xs"
     >
-      {/* Left: Primary Editing Tools */}
-      <div className="flex items-center space-x-1 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
-        {tools.map((t) => (
-          <button
-            key={t.id}
-            id={`tool-${t.id}`}
-            onClick={() => onSetToolMode(t.id)}
-            title={`${t.label} (${t.shortcut})`}
-            className={`flex items-center space-x-1 px-2 py-1 rounded-md transition-colors ${
-              toolMode === t.id
-                ? 'bg-stone-900 text-white shadow-xs font-semibold'
-                : 'text-stone-700 hover:bg-stone-100'
-            }`}
+      {/* Left: Primary Editing Tools including Text */}
+      <div className="flex items-center space-x-2.5 flex-wrap gap-y-1">
+        {onSetToolMode && (
+          <div className="flex items-center space-x-1 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
+            {tools.map((t) => (
+              <button
+                key={t.id}
+                id={`tool-${t.id}`}
+                onClick={() => onSetToolMode(t.id)}
+                title={`${t.label} (${t.shortcut})`}
+                className={`flex items-center space-x-1 px-2 py-1 rounded-md transition-colors ${
+                  toolMode === t.id
+                    ? 'bg-stone-900 text-white shadow-xs font-semibold'
+                    : 'text-stone-700 hover:bg-stone-100'
+                }`}
+              >
+                {t.icon}
+                <span className="font-medium text-[11px]">{t.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Note Value Selector & Position Indicator */}
+        <div className="flex items-center space-x-2">
+          {onChangeBeatValue && (
+            <div className="flex items-center space-x-1 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
+              <span className="text-[10px] uppercase font-bold text-stone-500 px-1.5">Value</span>
+              {[1, 2, 3, 4].map((val) => (
+                <button
+                  key={val}
+                  id={`value-selector-${val}`}
+                  onClick={() => onChangeBeatValue(val)}
+                  title={`${val} note${val > 1 ? 's' : ''} per beat`}
+                  className={`w-6 h-6 flex items-center justify-center rounded-md font-bold text-xs transition-colors ${
+                    currentBeatValue === val
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-stone-700 hover:bg-stone-100'
+                  }`}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Compact Active Position Indicator */}
+          <div
+            id="active-position-indicator"
+            className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-stone-100/90 border border-stone-200 text-stone-700 font-medium text-[11px]"
+            title="Active position in the score"
           >
-            {t.icon}
-            <span className="font-medium text-[11px]">{t.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Middle-Left: Compact Note Value Selector (1, 2, 3, 4) */}
-      {onChangeBeatValue && (
-        <div className="flex items-center space-x-1 bg-white p-0.5 rounded-lg border border-stone-200/90 shadow-2xs">
-          <span className="text-[10px] uppercase font-bold text-stone-500 px-1.5">Value</span>
-          {[1, 2, 3, 4].map((val) => (
-            <button
-              key={val}
-              id={`value-selector-${val}`}
-              onClick={() => onChangeBeatValue(val)}
-              title={`${val} note${val > 1 ? 's' : ''} per beat`}
-              className={`w-6 h-6 flex items-center justify-center rounded-md font-bold text-xs transition-colors ${
-                currentBeatValue === val
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              {val}
-            </button>
-          ))}
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+            <span>{activePositionText}</span>
+          </div>
         </div>
-      )}
-
-      {/* Middle: Compact Active Position Indicator */}
-      <div
-        id="active-position-indicator"
-        className="hidden md:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-stone-100/90 border border-stone-200 text-stone-700 font-medium text-[11px]"
-        title="Active position in the score"
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-        <span>{activePositionText}</span>
       </div>
 
       {/* Right Side: Accidentals, Hand Selector & Inspector Toggle */}

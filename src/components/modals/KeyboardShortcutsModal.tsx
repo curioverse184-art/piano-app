@@ -18,11 +18,12 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
       { key: 'N', desc: 'Note entry tool' },
       { key: 'R', desc: 'Rest entry tool' },
       { key: 'L', desc: 'Lyrics entry tool' },
+      { key: 'T', desc: 'Score text tool' },
       { key: 'Shift + C', desc: 'Add chord symbol' },
       { key: 'Del / Backspace', desc: 'Clear subdivision (.) or beat (—)' },
     ]},
-    { category: 'Note Durations & Subdivisions', items: [
-      { key: '1 - 4', desc: 'Value 1 to 4 notes per beat' },
+    { category: 'Note Values & Subdivisions', items: [
+      { key: '1 - 4 or F1 - F4', desc: 'Note Value: 1, 2, 3, or 4 notes per beat' },
       { key: '.', desc: 'Intentional empty subdivision (.)' },
     ]},
     { category: 'Note Pitch Entry (Computer Keyboard & Piano)', items: [

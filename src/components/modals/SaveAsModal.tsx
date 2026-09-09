@@ -35,8 +35,8 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
               <Copy className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="font-serif font-bold text-stone-900 text-base">Save a Copy</h2>
-              <p className="text-xs text-stone-500">Duplicate this project with a new name</p>
+              <h2 className="font-serif font-bold text-stone-900 text-base">Save As</h2>
+              <p className="text-xs text-stone-500">Save a new copy with an independent project ID</p>
             </div>
           </div>
           <button
@@ -79,7 +79,7 @@ export const SaveAsModal: React.FC<SaveAsModalProps> = ({
               className="px-4 py-1.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none rounded-lg shadow-xs transition-colors flex items-center space-x-1.5"
             >
               <Check className="w-3.5 h-3.5" />
-              <span>Save Copy</span>
+              <span>Save As</span>
             </button>
           </div>
         </form>

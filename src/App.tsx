@@ -14,6 +14,7 @@ import {
   LearningLayerSettings,
   DEFAULT_LEARNING_LAYER,
   SavedProject,
+  ScoreTextAnnotation,
 } from './types/score';
 import { SAMPLE_SCORES } from './data/sampleScores';
 import { audioEngine } from './services/audioEngine';
@@ -51,6 +52,8 @@ import { MidiDeviceModal } from './components/midi/MidiDeviceModal';
 import { NewScoreSetupModal } from './components/modals/NewScoreSetupModal';
 import { SaveAsModal } from './components/modals/SaveAsModal';
 import { ProjectLibraryModal } from './components/modals/ProjectLibraryModal';
+import { TextAnnotationModal } from './components/modals/TextAnnotationModal';
+import { UnsavedChangesModal } from './components/modals/UnsavedChangesModal';
 
 export default function App() {
   // Navigation & Startup view state: persist across refreshes
@@ -61,6 +64,16 @@ export default function App() {
   const [isNewScoreModalOpen, setIsNewScoreModalOpen] = useState(false);
   const [isSaveAsModalOpen, setIsSaveAsModalOpen] = useState(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [unsavedModalConfig, setUnsavedModalConfig] = useState<{
+    isOpen: boolean;
+    actionType: 'new' | 'open' | 'home';
+    pendingTarget?: SavedProject | Score | null;
+  }>({
+    isOpen: false,
+    actionType: 'new',
+    pendingTarget: null,
+  });
 
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>(() =>
     ProjectStorageService.getSavedProjects()
@@ -124,6 +137,14 @@ export default function App() {
   const [quantization, setQuantization] = useState('quarter');
   const [selectedChannel, setSelectedChannel] = useState(0);
   const [velocitySensitive, setVelocitySensitive] = useState(true);
+  const [textModalConfig, setTextModalConfig] = useState<{
+    isOpen: boolean;
+    initialData?: Partial<ScoreTextAnnotation>;
+    measureId: string;
+    measureNumber: number;
+    beatIndex: number;
+    placement: 'above' | 'below' | 'free';
+  } | null>(null);
   const [appToast, setAppToast] = useState<string | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -139,6 +160,7 @@ export default function App() {
     });
     setHistoryIndex((prev) => prev + 1);
     setScore(newScore);
+    setIsDirty(true);
   }, [historyIndex]);
 
   // Undo / Redo
@@ -174,6 +196,7 @@ export default function App() {
     setScore(newScore);
     setHistory([newScore]);
     setHistoryIndex(0);
+    setIsDirty(false);
     const initialBeatIndex = Math.max(0, (newScore.metadata.pickupBeat || 1) - 1);
     setSelection({
       measureId: newScore.measures[0]?.id || 'm1',
@@ -196,6 +219,7 @@ export default function App() {
     setScore(scoreToLoad);
     setHistory([scoreToLoad]);
     setHistoryIndex(0);
+    setIsDirty(false);
     const initialBeatIndex = Math.max(0, (scoreToLoad.metadata?.pickupBeat || 1) - 1);
     setSelection({
       measureId: scoreToLoad.measures[0]?.id || 'm1',
@@ -230,6 +254,7 @@ export default function App() {
     // Auto-save current project state internally
     const updated = ProjectStorageService.saveProject(score);
     setSavedProjects(updated);
+    setIsDirty(false);
     // Stop audio playback if active
     audioEngine.stopPlayback();
     setPlaybackPosition(null);
@@ -242,11 +267,53 @@ export default function App() {
       const updated = ProjectStorageService.saveProject(score);
       setSavedProjects(updated);
       localStorage.setItem('pianotastic_last_active_project_id', score.id);
+      setIsDirty(false);
       showToast(`Saved "${score.metadata.title}" internally`);
     } catch (err) {
       console.error('Error saving project internally:', err);
     }
   }, [score, showToast]);
+
+  // Prompt-guarded New / Open / Home actions for Unsaved Changes
+  const requestNewProject = useCallback(() => {
+    if (isDirty) {
+      setUnsavedModalConfig({
+        isOpen: true,
+        actionType: 'new',
+        pendingTarget: null,
+      });
+    } else {
+      handleOpenNewPageModal();
+    }
+  }, [isDirty, handleOpenNewPageModal]);
+
+  const requestOpenProject = useCallback((target?: SavedProject | Score) => {
+    if (isDirty) {
+      setUnsavedModalConfig({
+        isOpen: true,
+        actionType: 'open',
+        pendingTarget: target || null,
+      });
+    } else {
+      if (target) {
+        handleSelectProject(target);
+      } else {
+        setIsLibraryModalOpen(true);
+      }
+    }
+  }, [isDirty, handleSelectProject]);
+
+  const requestNavigateHome = useCallback(() => {
+    if (isDirty) {
+      setUnsavedModalConfig({
+        isOpen: true,
+        actionType: 'home',
+        pendingTarget: null,
+      });
+    } else {
+      handleNavigateHome();
+    }
+  }, [isDirty, handleNavigateHome]);
 
   // Internal Save Copy / Save As (No download)
   const handleSaveCopy = useCallback(
@@ -265,12 +332,117 @@ export default function App() {
         const updated = ProjectStorageService.saveProject(newScore);
         setSavedProjects(updated);
         localStorage.setItem('pianotastic_last_active_project_id', newScore.id);
+        setIsDirty(false);
         showToast(`Saved copy as "${newTitle}" internally`);
       } catch (err) {
         console.error('Error saving copy internally:', err);
       }
     },
     [score, pushScoreState, showToast]
+  );
+
+  // Add Measure at End handler
+  const handleAddMeasureAtEnd = useCallback(() => {
+    setScore((prev) => {
+      const beatsCount = prev.metadata.initialTimeSignature?.numerator || 4;
+      const rhEvents: NoteEvent[] = Array.from({ length: beatsCount }, (_, i) => ({
+        id: `rh_${Date.now()}_${i}`,
+        type: 'note',
+        pitches: [],
+        duration: 'quarter',
+        beatValue: 1,
+        subdivisionPitches: [[]],
+      }));
+      const lhEvents: NoteEvent[] = Array.from({ length: beatsCount }, (_, i) => ({
+        id: `lh_${Date.now()}_${i}`,
+        type: 'note',
+        pitches: [],
+        duration: 'quarter',
+        beatValue: 1,
+        subdivisionPitches: [[]],
+      }));
+
+      const newMeasure: Measure = {
+        id: `m_${Date.now()}`,
+        measureNumber: prev.measures.length + 1,
+        barlineType: 'single',
+        chordSymbols: [],
+        rhEvents,
+        lhEvents,
+      };
+
+      const newMeasures = [...prev.measures, newMeasure];
+      const updated: Score = { ...prev, measures: newMeasures };
+      pushScoreState(updated);
+      setSelection({
+        measureId: newMeasure.id,
+        staff: 'RH',
+        eventId: null,
+        beatIndex: 0,
+        subBeatIndex: 0,
+      });
+      showToast(`Added Measure ${newMeasure.measureNumber} at end`);
+      return updated;
+    });
+  }, [pushScoreState, showToast]);
+
+  // Change Canonical Time Signature
+  const handleChangeTimeSignature = useCallback(
+    (newTimeSig: TimeSignature) => {
+      setScore((prev) => {
+        const oldNumerator = prev.metadata.initialTimeSignature?.numerator || 4;
+        const newNumerator = newTimeSig.numerator;
+
+        const updatedMeasures = prev.measures.map((m) => {
+          let newRh = [...m.rhEvents];
+          let newLh = [...m.lhEvents];
+
+          if (newNumerator > oldNumerator) {
+            for (let b = oldNumerator; b < newNumerator; b++) {
+              newRh.push({
+                id: `rh_${Date.now()}_${b}`,
+                type: 'note',
+                pitches: [],
+                duration: 'quarter',
+                beatValue: 1,
+                subdivisionPitches: [[]],
+              });
+              newLh.push({
+                id: `lh_${Date.now()}_${b}`,
+                type: 'note',
+                pitches: [],
+                duration: 'quarter',
+                beatValue: 1,
+                subdivisionPitches: [[]],
+              });
+            }
+          } else if (newNumerator < oldNumerator) {
+            newRh = newRh.slice(0, newNumerator);
+            newLh = newLh.slice(0, newNumerator);
+          }
+
+          return {
+            ...m,
+            rhEvents: newRh,
+            lhEvents: newLh,
+            timeSignature: newTimeSig,
+          };
+        });
+
+        const updated: Score = {
+          ...prev,
+          metadata: {
+            ...prev.metadata,
+            initialTimeSignature: newTimeSig,
+          },
+          measures: updatedMeasures,
+        };
+        pushScoreState(updated);
+        showToast(`Time signature set to ${newTimeSig.numerator}/${newTimeSig.denominator}`);
+        return updated;
+      });
+    },
+    [pushScoreState, showToast]
   );
 
   // Internal Duplicate Project from library
@@ -591,6 +763,13 @@ export default function App() {
       if (!targetMeasure) return;
       const currentBeatIndex = selection.beatIndex !== undefined ? selection.beatIndex : 0;
 
+      // Respect Pickup Beat restrictions
+      const pickup = score.metadata.pickupBeat || 1;
+      if (isBeatLockedByPickup(targetMeasure.measureNumber, currentBeatIndex, pickup)) {
+        showToast(`Beat ${currentBeatIndex + 1} is locked by Pickup Beat ${pickup}`);
+        return;
+      }
+
       const safeVal = Math.max(1, Math.min(4, newValue));
       const nextBeatValues = {
         ...(targetMeasure.beatValues || {}),
@@ -604,6 +783,10 @@ export default function App() {
         }
         if (curBeatNotes.length > safeVal) {
           curBeatNotes.length = safeVal;
+        }
+      } else {
+        if (curBeatNotes.length > 1) {
+          curBeatNotes.length = 1;
         }
       }
 
@@ -626,14 +809,21 @@ export default function App() {
       const updated: Score = { ...score, measures: updatedMeasures };
       pushScoreState(updated);
 
-      setSelection((sel) => ({
-        ...sel,
-        subBeatIndex: 0,
-      }));
+      // Preserve cursor measure, beat, and safely clamp subdivision
+      setSelection((sel) => {
+        const currentSub = sel.subBeatIndex || 0;
+        const safeSub = Math.min(currentSub, safeVal - 1);
+        return {
+          ...sel,
+          subBeatIndex: Math.max(0, safeSub),
+        };
+      });
+
+      showToast(`Value ${safeVal}: ${safeVal} note${safeVal > 1 ? 's' : ''} per beat`);
     } catch (err) {
       console.error('Error changing beat value:', err);
     }
-  }, [selection, score, pushScoreState]);
+  }, [selection, score, pushScoreState, showToast]);
 
   // Quick Change Bars Per Line (1 to 6)
   const handleChangeBarsPerLine = useCallback((bars: number) => {
@@ -1092,8 +1282,158 @@ export default function App() {
     [selection.measureId, score, pushScoreState, showToast]
   );
 
-  // Delete Selected Event (chord, lyric, or note/beat)
+  // Text Annotation Handlers
+  const handleDeleteTextAnnotation = useCallback(
+    (textId: string) => {
+      setScore((prev) => {
+        const updatedScore: Score = {
+          ...prev,
+          textAnnotations: (prev.textAnnotations || []).filter((t) => t.id !== textId),
+        };
+        pushScoreState(updatedScore);
+        return updatedScore;
+      });
+      setSelection((sel) => ({
+        ...sel,
+        textAnnotationId: undefined,
+        selectionType: sel.textAnnotationId === textId || sel.eventId === textId ? 'beat' : sel.selectionType,
+        eventId: sel.eventId === textId ? null : sel.eventId,
+      }));
+      showToast('Text annotation deleted');
+    },
+    [pushScoreState, showToast]
+  );
+
+  const handleSaveTextAnnotation = useCallback(
+    (annotationData: Partial<ScoreTextAnnotation>) => {
+      let targetId = annotationData.id;
+      setScore((prev) => {
+        const existing = prev.textAnnotations || [];
+        targetId = targetId || `text_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const isEditing = existing.some((t) => t.id === targetId);
+
+        let updated: ScoreTextAnnotation[];
+        if (isEditing) {
+          updated = existing.map((t) =>
+            t.id === targetId ? ({ ...t, ...annotationData } as ScoreTextAnnotation) : t
+          );
+        } else {
+          const newAnnotation: ScoreTextAnnotation = {
+            id: targetId,
+            text: annotationData.text || '',
+            measureId: annotationData.measureId || selection.measureId || prev.measures[0]?.id || 'm1',
+            measureNumber: annotationData.measureNumber || 1,
+            beatIndex: annotationData.beatIndex ?? (selection.beatIndex !== undefined ? selection.beatIndex : 0),
+            placement: annotationData.placement || 'above',
+            offsetX: annotationData.offsetX ?? 0,
+            offsetY: annotationData.offsetY ?? 0,
+            fontSize: annotationData.fontSize ?? 14,
+            fontWeight: annotationData.fontWeight ?? 'normal',
+            fontStyle: annotationData.fontStyle ?? 'normal',
+            textDecoration: annotationData.textDecoration ?? 'none',
+            textAlign: annotationData.textAlign ?? 'left',
+            color: annotationData.color ?? '#0f172a',
+          };
+          updated = [...existing, newAnnotation];
+        }
+
+        const updatedScore: Score = {
+          ...prev,
+          textAnnotations: updated,
+        };
+        pushScoreState(updatedScore);
+        return updatedScore;
+      });
+
+      if (targetId) {
+        setSelection((sel) => ({
+          ...sel,
+          textAnnotationId: targetId,
+          selectionType: 'text',
+          eventId: targetId,
+        }));
+      }
+
+      setTextModalConfig(null);
+      showToast(annotationData.id ? 'Text updated' : 'Text added to score');
+    },
+    [selection, pushScoreState, showToast]
+  );
+
+  const handleUpdateTextAnnotation = useCallback(
+    (textId: string, patch: Partial<ScoreTextAnnotation>) => {
+      setScore((prev) => {
+        const updatedScore: Score = {
+          ...prev,
+          textAnnotations: (prev.textAnnotations || []).map((t) =>
+            t.id === textId ? { ...t, ...patch } : t
+          ),
+        };
+        pushScoreState(updatedScore);
+        return updatedScore;
+      });
+    },
+    [pushScoreState]
+  );
+
+  const handleMoveTextAnnotation = useCallback((textId: string, offsetX: number, offsetY: number) => {
+    setScore((prev) => ({
+      ...prev,
+      textAnnotations: (prev.textAnnotations || []).map((t) =>
+        t.id === textId ? { ...t, offsetX, offsetY } : t
+      ),
+    }));
+  }, []);
+
+  const handleSelectTextAnnotation = useCallback(
+    (textId: string) => {
+      const textObj = (score.textAnnotations || []).find((t) => t.id === textId);
+      setSelection((prev) => ({
+        ...prev,
+        textAnnotationId: textId,
+        selectionType: 'text',
+        eventId: textId,
+        measureId: textObj?.measureId || prev.measureId,
+        beatIndex: textObj?.beatIndex !== undefined ? textObj.beatIndex : prev.beatIndex,
+      }));
+    },
+    [score.textAnnotations]
+  );
+
+  const handleEditTextAnnotation = useCallback((textAnnotation: ScoreTextAnnotation) => {
+    setTextModalConfig({
+      isOpen: true,
+      initialData: textAnnotation,
+      measureId: textAnnotation.measureId,
+      measureNumber: textAnnotation.measureNumber,
+      beatIndex: textAnnotation.beatIndex !== undefined ? textAnnotation.beatIndex : 0,
+      placement: textAnnotation.placement || 'above',
+    });
+  }, []);
+
+  const handleOpenAddTextModal = useCallback(
+    (measureId: string, beatIndex: number, placement?: 'above' | 'below') => {
+      const meas = score.measures.find((m) => m.id === measureId);
+      setTextModalConfig({
+        isOpen: true,
+        measureId,
+        measureNumber: meas?.measureNumber || 1,
+        beatIndex,
+        placement: placement || 'above',
+      });
+    },
+    [score.measures]
+  );
+
+  // Delete Selected Event (chord, lyric, text annotation, or note/beat)
   const handleDeleteSelected = useCallback(() => {
+    if (selection.textAnnotationId || selection.selectionType === 'text') {
+      const textId = selection.textAnnotationId || (selection.eventId as string);
+      if (textId) {
+        handleDeleteTextAnnotation(textId);
+        return;
+      }
+    }
     if (selection.selectionType === 'chord') {
       if (selection.measureId && selection.beatIndex !== undefined) {
         handleUpdateBeatChord(selection.measureId, selection.beatIndex, '');
@@ -1109,7 +1449,14 @@ export default function App() {
       return;
     }
     handleClearCurrentBeat();
-  }, [selection, handleUpdateBeatChord, handleUpdateBeatLyric, handleClearCurrentBeat, showToast]);
+  }, [
+    selection,
+    handleDeleteTextAnnotation,
+    handleUpdateBeatChord,
+    handleUpdateBeatLyric,
+    handleClearCurrentBeat,
+    showToast,
+  ]);
 
   // Transpose Selected Note Up / Down (supports Pianotastic subdivision notes and standard events)
   const handleTransposeSelected = useCallback((stepDelta: number) => {
@@ -1208,8 +1555,28 @@ export default function App() {
         return;
       }
 
-      // Ignore if user is in an input or textarea
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+      // Ignore if user is in an input or textarea or contenteditable element
+      const targetEl = e.target as HTMLElement | null;
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetEl?.tagName || '') ||
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl?.tagName || '') ||
+        targetEl?.isContentEditable ||
+        activeEl?.isContentEditable
+      ) {
+        return;
+      }
+
+      // Ignore shortcuts if modal or dialog is open
+      if (
+        isNewScoreModalOpen ||
+        isSaveAsModalOpen ||
+        isLibraryModalOpen ||
+        isCustomTimeSigOpen ||
+        isChordDialogOpen ||
+        isShortcutsOpen ||
+        Boolean(textModalConfig?.isOpen)
+      ) {
         return;
       }
 
@@ -1271,6 +1638,10 @@ export default function App() {
         setToolMode('lyrics');
         return;
       }
+      if (e.key.toLowerCase() === 't') {
+        setToolMode('text');
+        return;
+      }
 
       // Shift + C -> Open Chord Symbol Dialog (Must require Shift so normal C enters pitch)
       if (e.shiftKey && (e.key === 'C' || e.key === 'c' || e.code === 'KeyC')) {
@@ -1279,13 +1650,29 @@ export default function App() {
         return;
       }
 
-      // Durations (1-6)
-      if (e.key === '1') { setSelectedDuration('whole'); return; }
-      if (e.key === '2') { setSelectedDuration('half'); return; }
-      if (e.key === '3') { setSelectedDuration('quarter'); return; }
-      if (e.key === '4') { setSelectedDuration('eighth'); return; }
-      if (e.key === '5') { setSelectedDuration('sixteenth'); return; }
-      if (e.key === '6') { setSelectedDuration('thirty_second'); return; }
+      // Note Value shortcuts: 1..4 and F1..F4 (Pianotastic notation workflow)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (e.key === '1' || e.key === 'F1' || e.code === 'Digit1' || e.code === 'Numpad1' || e.code === 'F1') {
+          e.preventDefault();
+          handleChangeBeatValue(1);
+          return;
+        }
+        if (e.key === '2' || e.key === 'F2' || e.code === 'Digit2' || e.code === 'Numpad2' || e.code === 'F2') {
+          e.preventDefault();
+          handleChangeBeatValue(2);
+          return;
+        }
+        if (e.key === '3' || e.key === 'F3' || e.code === 'Digit3' || e.code === 'Numpad3' || e.code === 'F3') {
+          e.preventDefault();
+          handleChangeBeatValue(3);
+          return;
+        }
+        if (e.key === '4' || e.key === 'F4' || e.code === 'Digit4' || e.code === 'Numpad4' || e.code === 'F4') {
+          e.preventDefault();
+          handleChangeBeatValue(4);
+          return;
+        }
+      }
 
       // Intentional empty subdivision (dot / period '.') in Pianotastic notation
       if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === '.') {
@@ -1294,9 +1681,16 @@ export default function App() {
         return;
       }
 
-      // Delete / Backspace -> Clears beat to '—' or subdivision to '.', or moves back
+      // Delete / Backspace -> Clears selected text or beat to '—' or subdivision to '.', or moves back
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
+        if (selection.textAnnotationId || selection.selectionType === 'text') {
+          const textId = selection.textAnnotationId || (selection.eventId as string);
+          if (textId) {
+            handleDeleteTextAnnotation(textId);
+            return;
+          }
+        }
         handleClearCurrentBeat();
         return;
       }
@@ -1417,12 +1811,19 @@ export default function App() {
     handleToggleLineBreak,
     handleTransposeSelected,
     handlePianotasticNoteInput,
+    handleChangeBeatValue,
     score,
     playbackPosition,
     selection,
     activeHand,
     selectedAccidental,
     viewMode,
+    isNewScoreModalOpen,
+    isSaveAsModalOpen,
+    isLibraryModalOpen,
+    isCustomTimeSigOpen,
+    isChordDialogOpen,
+    isShortcutsOpen,
   ]);
 
   // Web MIDI note input listener
@@ -1499,12 +1900,17 @@ export default function App() {
           setScore(t);
           pushScoreState(t);
         }}
-        onNavigateHome={handleNavigateHome}
-        onOpenNewPageModal={handleOpenNewPageModal}
+        onNavigateHome={requestNavigateHome}
+        onOpenNewPageModal={requestNewProject}
         onSaveProject={handleSaveProject}
         onOpenSaveAs={() => setIsSaveAsModalOpen(true)}
-        onOpenProjectLibrary={() => setIsLibraryModalOpen(true)}
+        onOpenProjectLibrary={() => requestOpenProject()}
         onOpenPrintStudio={() => setViewMode('print')}
+        onAddMeasure={handleAddMeasureAtEnd}
+        onOpenCustomTimeSignature={() => setIsCustomTimeSigOpen(true)}
+        onChangeTimeSignature={handleChangeTimeSignature}
+        onOpenChordDialog={() => setIsChordDialogOpen(true)}
+        onResetLayout={handleResetLayout}
       />
 
       {/* 2. Main Notation Toolbar */}
@@ -1591,6 +1997,11 @@ export default function App() {
                 setNavigationModalMeasure(measure)
               }
               onToggleLineBreak={handleToggleLineBreak}
+              onSelectTextAnnotation={handleSelectTextAnnotation}
+              onEditTextAnnotation={handleEditTextAnnotation}
+              onOpenAddTextModal={handleOpenAddTextModal}
+              onMoveTextAnnotation={handleMoveTextAnnotation}
+              onDeleteTextAnnotation={handleDeleteTextAnnotation}
             />
           </ErrorBoundary>
         </div>
@@ -1634,6 +2045,10 @@ export default function App() {
           onOpenCustomTimeSignature={() => setIsCustomTimeSigOpen(true)}
           onOpenChordDialog={() => setIsChordDialogOpen(true)}
           onResetLayout={handleResetLayout}
+          onOpenAddTextModal={handleOpenAddTextModal}
+          onEditTextAnnotation={handleEditTextAnnotation}
+          onDeleteTextAnnotation={handleDeleteTextAnnotation}
+          onUpdateTextAnnotation={handleUpdateTextAnnotation}
         />
       </div>
 
@@ -1763,12 +2178,63 @@ export default function App() {
         projects={savedProjects}
         currentProjectId={score.id}
         onClose={() => setIsLibraryModalOpen(false)}
-        onOpenProject={handleSelectProject}
+        onOpenProject={(proj) => {
+          setIsLibraryModalOpen(false);
+          requestOpenProject(proj);
+        }}
         onDeleteProject={handleDeleteProject}
         onDuplicateProject={handleDuplicateProject}
         onNewProject={() => {
           setIsLibraryModalOpen(false);
-          setIsNewScoreModalOpen(true);
+          requestNewProject();
+        }}
+      />
+
+      {/* Unsaved Changes Confirmation Modal */}
+      <UnsavedChangesModal
+        isOpen={unsavedModalConfig.isOpen}
+        projectTitle={score.metadata.title}
+        actionType={unsavedModalConfig.actionType}
+        onSaveAndProceed={() => {
+          handleSaveProject();
+          const act = unsavedModalConfig.actionType;
+          const target = unsavedModalConfig.pendingTarget;
+          setUnsavedModalConfig({ isOpen: false, actionType: 'new', pendingTarget: null });
+          if (act === 'new') {
+            handleOpenNewPageModal();
+          } else if (act === 'open') {
+            if (target) {
+              handleSelectProject(target);
+            } else {
+              setIsLibraryModalOpen(true);
+            }
+          } else if (act === 'home') {
+            audioEngine.stopPlayback();
+            setPlaybackPosition(null);
+            setViewMode('home');
+          }
+        }}
+        onDiscardAndProceed={() => {
+          setIsDirty(false);
+          const act = unsavedModalConfig.actionType;
+          const target = unsavedModalConfig.pendingTarget;
+          setUnsavedModalConfig({ isOpen: false, actionType: 'new', pendingTarget: null });
+          if (act === 'new') {
+            handleOpenNewPageModal();
+          } else if (act === 'open') {
+            if (target) {
+              handleSelectProject(target);
+            } else {
+              setIsLibraryModalOpen(true);
+            }
+          } else if (act === 'home') {
+            audioEngine.stopPlayback();
+            setPlaybackPosition(null);
+            setViewMode('home');
+          }
+        }}
+        onCancel={() => {
+          setUnsavedModalConfig({ isOpen: false, actionType: 'new', pendingTarget: null });
         }}
       />
 
@@ -1778,6 +2244,26 @@ export default function App() {
         onClose={handleCloseNewPageModal}
         onCreateScore={handleCreateScore}
       />
+
+      {/* Score Text Annotation Tool Modal */}
+      {textModalConfig?.isOpen && (
+        <TextAnnotationModal
+          isOpen={textModalConfig.isOpen}
+          onClose={() => setTextModalConfig(null)}
+          onSaveText={handleSaveTextAnnotation}
+          onDeleteText={handleDeleteTextAnnotation}
+          initialData={
+            textModalConfig.initialData || {
+              measureId: textModalConfig.measureId,
+              measureNumber: textModalConfig.measureNumber,
+              beatIndex: textModalConfig.beatIndex,
+              placement: textModalConfig.placement,
+            }
+          }
+          targetMeasureNumber={textModalConfig.measureNumber}
+          targetBeatNumber={textModalConfig.beatIndex + 1}
+        />
+      )}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import {
   NavigationJump,
   NavigationTarget,
   VoltaEnding,
+  ScoreTextAnnotation,
 } from '../../types/score';
 import { KEY_SIGNATURES } from '../../utils/musicTheory';
 import {
@@ -76,6 +77,10 @@ interface PropertiesPanelProps {
   onOpenCustomTimeSignature: () => void;
   onOpenChordDialog: () => void;
   onResetLayout: () => void;
+  onOpenAddTextModal?: (measureId: string, beatIndex: number, placement?: 'above' | 'below') => void;
+  onEditTextAnnotation?: (textAnnotation: ScoreTextAnnotation) => void;
+  onDeleteTextAnnotation?: (textId: string) => void;
+  onUpdateTextAnnotation?: (textId: string, patch: Partial<ScoreTextAnnotation>) => void;
 }
 
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
@@ -105,6 +110,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   onOpenCustomTimeSignature,
   onOpenChordDialog,
   onResetLayout,
+  onOpenAddTextModal,
+  onEditTextAnnotation,
+  onDeleteTextAnnotation,
+  onUpdateTextAnnotation,
 }) => {
   if (!isOpen) return null;
 
@@ -114,6 +123,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   const activeMeasure = score.measures[measureIdx] || score.measures[0];
   const beatIndex = selection.beatIndex !== undefined ? selection.beatIndex : 0;
   const subBeatIndex = selection.subBeatIndex || 0;
+
+  // Selected Text Annotation
+  const selectedTextAnnotation = (score.textAnnotations || []).find(
+    (t) =>
+      t.id === selection.textAnnotationId ||
+      (selection.selectionType === 'text' && t.id === selection.eventId)
+  );
 
   const totalBeats = activeMeasure
     ? getMeasureTotalBeats(activeMeasure, score.metadata.initialTimeSignature)
@@ -241,6 +257,214 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         {/* ================= TAB 1: BEAT & OBJECT CONTROLS ================= */}
         {activeTab === 'active' && (
           <>
+            {/* Selected Score Text Annotation Controls */}
+            {selectedTextAnnotation && (
+              <div className="bg-blue-50/80 rounded-lg p-2.5 border border-blue-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5">
+                    <Type className="w-3.5 h-3.5 text-blue-700" />
+                    <span className="font-bold text-blue-900 text-[11px] uppercase tracking-wide">
+                      Selected Text
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => onDeleteTextAnnotation?.(selectedTextAnnotation.id)}
+                    className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                    title="Delete this text"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Text string preview & Edit button */}
+                <div className="bg-white rounded border border-blue-200 p-2 flex items-center justify-between">
+                  <span
+                    className="font-medium text-stone-900 truncate max-w-[170px]"
+                    style={{
+                      fontWeight: selectedTextAnnotation.fontWeight || 'normal',
+                      fontStyle: selectedTextAnnotation.fontStyle || 'normal',
+                      textDecoration: selectedTextAnnotation.textDecoration || 'none',
+                    }}
+                  >
+                    "{selectedTextAnnotation.text}"
+                  </span>
+                  <button
+                    onClick={() => onEditTextAnnotation?.(selectedTextAnnotation)}
+                    className="text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded border border-blue-300 transition-colors"
+                  >
+                    Edit Text
+                  </button>
+                </div>
+
+                {/* Formatting: Font Size */}
+                <div>
+                  <label className="text-[10px] font-bold text-stone-600 block mb-1">Font Size (pt)</label>
+                  <div className="flex gap-1 flex-wrap">
+                    {[10, 12, 14, 16, 18, 20, 24].map((size) => (
+                      <button
+                        key={size}
+                        onClick={() =>
+                          onUpdateTextAnnotation?.(selectedTextAnnotation.id, { fontSize: size })
+                        }
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors ${
+                          (selectedTextAnnotation.fontSize || 14) === size
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Formatting: Bold, Italic, Underline & Alignment */}
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          fontWeight: selectedTextAnnotation.fontWeight === 'bold' ? 'normal' : 'bold',
+                        })
+                      }
+                      className={`w-6 h-6 rounded text-xs font-bold border transition-colors ${
+                        selectedTextAnnotation.fontWeight === 'bold'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      B
+                    </button>
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          fontStyle: selectedTextAnnotation.fontStyle === 'italic' ? 'normal' : 'italic',
+                        })
+                      }
+                      className={`w-6 h-6 rounded text-xs italic font-serif border transition-colors ${
+                        selectedTextAnnotation.fontStyle === 'italic'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      I
+                    </button>
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          textDecoration:
+                            selectedTextAnnotation.textDecoration === 'underline' ? 'none' : 'underline',
+                        })
+                      }
+                      className={`w-6 h-6 rounded text-xs underline border transition-colors ${
+                        selectedTextAnnotation.textDecoration === 'underline'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      U
+                    </button>
+                  </div>
+
+                  {/* Placement Toggle */}
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, { placement: 'above' })
+                      }
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                        selectedTextAnnotation.placement === 'above'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      Above
+                    </button>
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, { placement: 'below' })
+                      }
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                        selectedTextAnnotation.placement === 'below'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      Below
+                    </button>
+                  </div>
+                </div>
+
+                {/* Fine nudge coordinates */}
+                <div className="pt-1 flex items-center justify-between border-t border-blue-200/60 text-[10px] text-stone-600">
+                  <span>Position Nudge:</span>
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          offsetX: (selectedTextAnnotation.offsetX || 0) - 5,
+                        })
+                      }
+                      className="px-1 py-0.5 bg-white border border-stone-200 rounded hover:bg-stone-50 font-mono"
+                      title="Nudge Left"
+                    >
+                      ←
+                    </button>
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          offsetX: (selectedTextAnnotation.offsetX || 0) + 5,
+                        })
+                      }
+                      className="px-1 py-0.5 bg-white border border-stone-200 rounded hover:bg-stone-50 font-mono"
+                      title="Nudge Right"
+                    >
+                      →
+                    </button>
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          offsetY: (selectedTextAnnotation.offsetY || 0) - 5,
+                        })
+                      }
+                      className="px-1 py-0.5 bg-white border border-stone-200 rounded hover:bg-stone-50 font-mono"
+                      title="Nudge Up"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={() =>
+                        onUpdateTextAnnotation?.(selectedTextAnnotation.id, {
+                          offsetY: (selectedTextAnnotation.offsetY || 0) + 5,
+                        })
+                      }
+                      className="px-1 py-0.5 bg-white border border-stone-200 rounded hover:bg-stone-50 font-mono"
+                      title="Nudge Down"
+                    >
+                      ↓
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Add Text Annotation Button */}
+            {!selectedTextAnnotation && (
+              <button
+                onClick={() =>
+                  onOpenAddTextModal?.(
+                    activeMeasure?.id || 'm1',
+                    beatIndex,
+                    'above'
+                  )
+                }
+                className="w-full py-1.5 px-2.5 rounded-lg border border-dashed border-stone-300 hover:border-blue-500 hover:bg-blue-50/50 text-stone-700 hover:text-blue-700 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
+              >
+                <Type className="w-3.5 h-3.5 text-blue-600" />
+                <span>+ Add Score Text to Beat {beatIndex + 1}</span>
+              </button>
+            )}
+
             {/* 1. Note Value Section (1 to 4 notes per beat) */}
             <div className="bg-stone-50 rounded-lg p-2.5 border border-stone-200">
               <div className="flex items-center justify-between mb-2">
