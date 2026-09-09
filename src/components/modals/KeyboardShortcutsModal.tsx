@@ -18,22 +18,17 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
       { key: 'N', desc: 'Note entry tool' },
       { key: 'R', desc: 'Rest entry tool' },
       { key: 'L', desc: 'Lyrics entry tool' },
-      { key: 'C', desc: 'Chord symbol tool' },
-      { key: 'Del / Backspace', desc: 'Delete selected note, rest, or chord' },
+      { key: 'Shift + C', desc: 'Add chord symbol' },
+      { key: 'Del / Backspace', desc: 'Clear subdivision (.) or beat (—)' },
     ]},
-    { category: 'Note Durations', items: [
-      { key: '1', desc: 'Whole note (𝅝)' },
-      { key: '2', desc: 'Half note (𝅗𝅥)' },
-      { key: '3', desc: 'Quarter note (𝅘𝅥)' },
-      { key: '4', desc: 'Eighth note (𝅘𝅥𝅮)' },
-      { key: '5', desc: 'Sixteenth note (𝅘𝅥𝅯)' },
-      { key: '6', desc: 'Thirty-second note (𝅘𝅥𝅰)' },
-      { key: '.', desc: 'Toggle dotted note' },
+    { category: 'Note Durations & Subdivisions', items: [
+      { key: '1 - 4', desc: 'Value 1 to 4 notes per beat' },
+      { key: '.', desc: 'Intentional empty subdivision (.)' },
     ]},
-    { category: 'Note Pitch Entry (Computer Keyboard)', items: [
-      { key: 'A, B, C, D, E, F, G', desc: 'Insert note with specified letter pitch' },
+    { category: 'Note Pitch Entry (Computer Keyboard & Piano)', items: [
+      { key: 'A, B, C, D, E, F, G', desc: 'Insert note with specified letter pitch (including C)' },
       { key: '↑ / ↓ Arrow', desc: 'Transpose selected note up or down by step' },
-      { key: '← / → Arrow', desc: 'Navigate to previous / next note' },
+      { key: '← / → Arrow', desc: 'Navigate across subdivisions and beats' },
     ]},
     { category: 'Lyrics Mode', items: [
       { key: 'Type text', desc: 'Enter syllable for current note' },

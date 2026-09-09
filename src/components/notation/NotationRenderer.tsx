@@ -17,7 +17,9 @@ import {
   getMeasureBeatPitches,
   hasOctaveDotAbove,
   hasOctaveDotBelow,
+  getEffectiveBeatValue,
 } from '../../utils/pianotasticNotation';
+import { audioEngine } from '../../services/audioEngine';
 import { Check, Trash2, X } from 'lucide-react';
 
 interface NotationRendererProps {
@@ -642,7 +644,14 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                               Math.floor(playbackPosition.beat) === b;
 
                             const chord = getChordForBeat(measure, b);
-                            const pitches = beatPitches[b] || [];
+                            const effVal =
+                              measure.beatValues?.[b] ||
+                              getEffectiveBeatValue(score, measureIdx, b);
+                            const rawPitches = beatPitches[b] || [];
+                            const pitches: (Pitch | null)[] =
+                              effVal > 1
+                                ? Array.from({ length: effVal }, (_, i) => rawPitches[i] ?? null)
+                                : rawPitches;
                             const lyric = measure.beatLyrics?.[b] || '';
                             const symbols = measure.beatSymbols?.[b] || [];
 
@@ -792,17 +801,27 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                       —
                                     </text>
                                   ) : pitches.length === 0 ? (
-                                    <text
-                                      x={colCenterX}
-                                      y={systemY + 84}
-                                      fontFamily="'Plus Jakarta Sans', sans-serif"
-                                      fontSize="18"
-                                      fontWeight="bold"
-                                      fill="#94a3b8"
-                                      textAnchor="middle"
-                                    >
-                                      —
-                                    </text>
+                                    <g>
+                                      <text
+                                        x={colCenterX}
+                                        y={systemY + 84}
+                                        fontFamily="'Plus Jakarta Sans', sans-serif"
+                                        fontSize="18"
+                                        fontWeight="bold"
+                                        fill="#94a3b8"
+                                        textAnchor="middle"
+                                      >
+                                        —
+                                      </text>
+                                      {isSelectedBeat && (selection.subBeatIndex === undefined || selection.subBeatIndex === 0) && (
+                                        <circle
+                                          cx={colCenterX}
+                                          cy={systemY + 92}
+                                          r={2.8}
+                                          fill="#f59e0b"
+                                        />
+                                      )}
+                                    </g>
                                   ) : (
                                     // Multiple or single notes within this beat
                                     <g>
@@ -833,13 +852,24 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                                 onSelectBeat(measure.id, b, pIdx, 'note');
                                               }
                                             }}
+                                            className="cursor-pointer"
                                           >
+                                            {/* Transparent click area for this subdivision */}
+                                            <rect
+                                              x={noteX - colWidth / (count * 2)}
+                                              y={systemY + 60}
+                                              width={colWidth / count}
+                                              height={36}
+                                              fill="transparent"
+                                              className="hover:fill-amber-500/10"
+                                            />
+
                                             {/* Sub-beat cursor indicator */}
                                             {isSubBeatActive && (
                                               <circle
                                                 cx={noteX}
                                                 cy={systemY + 92}
-                                                r={2.5}
+                                                r={2.8}
                                                 fill="#f59e0b"
                                               />
                                             )}
@@ -859,7 +889,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                               x={noteX}
                                               y={systemY + 84}
                                               fontFamily="'Plus Jakarta Sans', sans-serif"
-                                              fontSize={count > 2 ? '13' : count === 2 ? '16' : '18'}
+                                              fontSize={count > 2 ? '14' : count === 2 ? '17' : '18'}
                                               fontWeight="bold"
                                               fill={
                                                 isSubBeatActive
@@ -870,7 +900,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                                               }
                                               textAnchor="middle"
                                             >
-                                              {isEmptySub ? (count > 1 ? '•' : '—') : formatNoteLetter(p)}
+                                              {isEmptySub ? (count > 1 ? '.' : '—') : formatNoteLetter(p)}
                                             </text>
 
                                             {/* Low Octave: Dot BELOW note */}
@@ -1204,6 +1234,7 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
                   if (onUpdateBeatChord) {
                     onUpdateBeatChord(activeChordPopover.measureId, activeChordPopover.beatIndex, c);
                   }
+                  audioEngine.playChord(c);
                   setActiveChordPopover(null);
                 }}
                 className={`px-1.5 py-0.5 rounded text-[11px] font-bold border transition-colors ${
@@ -1227,12 +1258,16 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
               onChange={(e) => setChordInputValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
+                  const chord = chordInputValue.trim();
                   if (onUpdateBeatChord) {
                     onUpdateBeatChord(
                       activeChordPopover.measureId,
                       activeChordPopover.beatIndex,
-                      chordInputValue.trim()
+                      chord
                     );
+                  }
+                  if (chord) {
+                    audioEngine.playChord(chord);
                   }
                   setActiveChordPopover(null);
                 } else if (e.key === 'Escape') {
@@ -1243,12 +1278,16 @@ export const NotationRenderer: React.FC<NotationRendererProps> = ({
             />
             <button
               onClick={() => {
+                const chord = chordInputValue.trim();
                 if (onUpdateBeatChord) {
                   onUpdateBeatChord(
                     activeChordPopover.measureId,
                     activeChordPopover.beatIndex,
-                    chordInputValue.trim()
+                    chord
                   );
+                }
+                if (chord) {
+                  audioEngine.playChord(chord);
                 }
                 setActiveChordPopover(null);
               }}

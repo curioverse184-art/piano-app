@@ -579,3 +579,154 @@ export const CHORD_QUALITIES = [
 ];
 
 export const CHORD_ROOTS = ['C', 'C#', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+export const ROOT_SEMITONES: Record<string, number> = {
+  C: 0,
+  'B#': 0,
+  'C#': 1,
+  Db: 1,
+  D: 2,
+  'D#': 3,
+  Eb: 3,
+  E: 4,
+  Fb: 4,
+  F: 5,
+  'E#': 5,
+  'F#': 6,
+  Gb: 6,
+  G: 7,
+  'G#': 8,
+  Ab: 8,
+  A: 9,
+  'A#': 10,
+  Bb: 10,
+  B: 11,
+  Cb: 11,
+};
+
+/**
+ * Parses a chord symbol (e.g. "C", "Am", "G7", "Cmaj7", "Dm", "F#m", "Eb7", "G/B", etc.)
+ * into an array of MIDI note numbers in an accompaniment register (octave 3 / 4).
+ * Chords sound as simultaneous harmonic units.
+ */
+export function parseChordToMidiNotes(chordStr: string, defaultOctave = 3): number[] {
+  if (!chordStr || typeof chordStr !== 'string') return [];
+  const trimmed = chordStr.trim();
+  if (!trimmed) return [];
+
+  // Check for slash bass note (e.g. "G/B", "C/E")
+  let mainChord = trimmed;
+  let bassNote: string | null = null;
+  if (trimmed.includes('/')) {
+    const parts = trimmed.split('/');
+    mainChord = parts[0].trim();
+    bassNote = parts[1].trim();
+  }
+
+  // Parse root and quality
+  const match = mainChord.match(/^([A-G][#b]?)(.*)$/i);
+  if (!match) return [];
+
+  const rawRoot = match[1];
+  const normalizedRoot = rawRoot.charAt(0).toUpperCase() + rawRoot.slice(1);
+  const rawQuality = (match[2] || '').trim();
+  const q = rawQuality.toLowerCase();
+
+  const rootSemitone = ROOT_SEMITONES[normalizedRoot];
+  if (rootSemitone === undefined) return [];
+
+  // Determine interval formula from root in semitones
+  let intervals: number[] = [0, 4, 7]; // default Major triad
+
+  if (q === 'm' || q === 'min' || q === 'minor' || q === '-') {
+    // Minor triad: 1 - b3 - 5
+    intervals = [0, 3, 7];
+  } else if (q === '7' || q === 'dom7' || q === 'dominant7') {
+    // Dominant 7: 1 - 3 - 5 - b7
+    intervals = [0, 4, 7, 10];
+  } else if (q === 'maj7' || q === 'major7' || q === 'Δ7' || q === 'ma7') {
+    // Major 7: 1 - 3 - 5 - 7
+    intervals = [0, 4, 7, 11];
+  } else if (q === 'm7' || q === 'min7' || q === 'minor7' || q === '-7') {
+    // Minor 7: 1 - b3 - 5 - b7
+    intervals = [0, 3, 7, 10];
+  } else if (q === 'mmaj7' || q === 'minmaj7' || q === 'm(maj7)') {
+    // Minor-Major 7: 1 - b3 - 5 - 7
+    intervals = [0, 3, 7, 11];
+  } else if (q === 'dim' || q === 'diminished' || q === '°') {
+    // Diminished triad: 1 - b3 - b5
+    intervals = [0, 3, 6];
+  } else if (q === 'dim7' || q === '°7') {
+    // Diminished 7: 1 - b3 - b5 - bb7
+    intervals = [0, 3, 6, 9];
+  } else if (q === 'm7b5' || q === 'ø' || q === 'ø7') {
+    // Half-diminished 7: 1 - b3 - b5 - b7
+    intervals = [0, 3, 6, 10];
+  } else if (q === 'aug' || q === 'augmented' || q === '+') {
+    // Augmented triad: 1 - 3 - #5
+    intervals = [0, 4, 8];
+  } else if (q === 'aug7' || q === '+7') {
+    // Augmented 7: 1 - 3 - #5 - b7
+    intervals = [0, 4, 8, 10];
+  } else if (q === 'sus2') {
+    // Suspended 2: 1 - 2 - 5
+    intervals = [0, 2, 7];
+  } else if (q === 'sus4' || q === 'sus') {
+    // Suspended 4: 1 - 4 - 5
+    intervals = [0, 5, 7];
+  } else if (q === '7sus4' || q === '7sus') {
+    // 7sus4: 1 - 4 - 5 - b7
+    intervals = [0, 5, 7, 10];
+  } else if (q === '6' || q === 'maj6') {
+    // Major 6: 1 - 3 - 5 - 6
+    intervals = [0, 4, 7, 9];
+  } else if (q === 'm6' || q === 'min6') {
+    // Minor 6: 1 - b3 - 5 - 6
+    intervals = [0, 3, 7, 9];
+  } else if (q === '9' || q === 'dom9') {
+    // Dominant 9: 1 - 3 - 5 - b7 - 9
+    intervals = [0, 4, 7, 10, 14];
+  } else if (q === 'maj9' || q === 'major9') {
+    // Major 9: 1 - 3 - 5 - 7 - 9
+    intervals = [0, 4, 7, 11, 14];
+  } else if (q === 'm9' || q === 'min9') {
+    // Minor 9: 1 - b3 - 5 - b7 - 9
+    intervals = [0, 3, 7, 10, 14];
+  } else if (q === 'add9') {
+    // Add 9: 1 - 3 - 5 - 9
+    intervals = [0, 4, 7, 14];
+  } else if (q === '11') {
+    // 11th: 1 - 3 - 5 - b7 - 9 - 11
+    intervals = [0, 4, 7, 10, 14, 17];
+  } else if (q === '13') {
+    // 13th: 1 - 3 - 5 - b7 - 9 - 13
+    intervals = [0, 4, 7, 10, 14, 21];
+  } else if (q === '5') {
+    // Power chord: 1 - 5
+    intervals = [0, 7];
+  } else {
+    // Major triad default (e.g. C, D, E, F, G, A, B, Cmaj)
+    intervals = [0, 4, 7];
+  }
+
+  // Calculate base MIDI note for root in octave 3
+  // C3 is MIDI 48 (octave 3 => (3 + 1) * 12 + 0 = 48)
+  const rootMidi = (defaultOctave + 1) * 12 + rootSemitone;
+
+  const chordMidis = intervals.map((iv) => rootMidi + iv);
+
+  // If a slash bass note is provided, prepend bass note in octave 2
+  if (bassNote) {
+    const bassMatch = bassNote.match(/^([A-G][#b]?)/i);
+    if (bassMatch) {
+      const normBass = bassMatch[1].charAt(0).toUpperCase() + bassMatch[1].slice(1);
+      const bassSemi = ROOT_SEMITONES[normBass];
+      if (bassSemi !== undefined) {
+        const bassMidi = (defaultOctave - 1 + 1) * 12 + bassSemi; // Octave 2
+        chordMidis.unshift(bassMidi);
+      }
+    }
+  }
+
+  return chordMidis;
+}

@@ -1,5 +1,5 @@
 import { NoteEvent, Pitch, Measure, Score, TempoBeatUnit, TimeSignature } from '../types/score';
-import { getMidiNote, midiToFrequency, getEventBeats } from '../utils/musicTheory';
+import { getMidiNote, midiToFrequency, getEventBeats, parseChordToMidiNotes } from '../utils/musicTheory';
 import { calculatePlaybackRoute, PlaybackStep } from '../utils/navigationEngine';
 import { getEffectiveBeatValue } from '../utils/pianotasticNotation';
 
@@ -224,6 +224,15 @@ class AudioEngine {
     return this.playTone(freq, durationSec);
   }
 
+  public playChord(chordStr: string, durationSec = 0.85, velocity = 0.65) {
+    const midis = parseChordToMidiNotes(chordStr);
+    if (!midis || midis.length === 0) return;
+    midis.forEach((midi) => {
+      const freq = midiToFrequency(midi);
+      this.playTone(freq, durationSec, velocity, 0);
+    });
+  }
+
   public playNoteEvent(event: NoteEvent, keySignatureId = 'C_major', durationSec?: number) {
     if (event.type === 'rest' || event.pitches.length === 0) return;
     const dur = durationSec ?? Math.max(0.2, getEventBeats(event) * 0.5);
@@ -316,6 +325,9 @@ class AudioEngine {
       }
     }
 
+    // Schedule simultaneous harmonic chord playback for this measure
+    this.scheduleMeasureChords(measure, quarterNoteSec, ts, currentStep.measureIndex);
+
     // Schedule audio events: check if measure has explicit beatNotes
     const hasBeatNotes =
       measure.beatNotes &&
@@ -346,6 +358,58 @@ class AudioEngine {
         this.runPlaybackLoop();
       }
     }, measureDurationSec * 1000);
+  }
+
+  /**
+   * Schedule simultaneous harmonic playback for chord symbols attached to beats.
+   * Chords sound at the accompaniment register for the duration of the beat,
+   * fully synchronized with melody, metronome, tempo, stop, and pause.
+   */
+  private scheduleMeasureChords(
+    measure: Measure,
+    quarterNoteSec: number,
+    ts: TimeSignature,
+    measureIndex: number
+  ) {
+    const pickupBeat = this.currentScore?.metadata?.pickupBeat || 1;
+    const isFirstMeasure = measure.measureNumber === 1 || measureIndex === 0;
+    const lockedBeforeBeat = isFirstMeasure && pickupBeat > 1 ? pickupBeat - 1 : 0;
+    const totalBeats = ts.numerator;
+    const beatDurationSec = (4 / ts.denominator) * quarterNoteSec;
+
+    for (let b = 0; b < totalBeats; b++) {
+      if (isFirstMeasure && b < lockedBeforeBeat) {
+        continue; // Locked pickup beat remains silent
+      }
+
+      // Find chord attached to this beat
+      let chordStr: string | undefined = undefined;
+      if (measure.beatChords && measure.beatChords[b] !== undefined && measure.beatChords[b].trim()) {
+        chordStr = measure.beatChords[b].trim();
+      } else if (measure.chordSymbols && measure.chordSymbols.length > 0) {
+        const cs = measure.chordSymbols.find((c) => Math.floor(c.beatOffset) === b);
+        if (cs) {
+          chordStr = cs.formatted || `${cs.root}${cs.quality || ''}`;
+        }
+      }
+
+      if (chordStr) {
+        const chordMidis = parseChordToMidiNotes(chordStr);
+        if (chordMidis && chordMidis.length > 0) {
+          const beatOffsetSec = b * beatDurationSec;
+          // Chord sounds for the duration of the beat
+          const chordDurationSec = Math.max(0.18, beatDurationSec * 0.96);
+
+          for (const midi of chordMidis) {
+            const freq = midiToFrequency(midi);
+            const handle = this.playTone(freq, chordDurationSec, 0.65, beatOffsetSec);
+            if (handle) {
+              this.scheduledEvents.push(handle);
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -381,6 +445,12 @@ class AudioEngine {
       const beatOffsetSec = b * beatDurationSec;
       const pitches = measure.beatNotes?.[b] || [];
 
+      // Check if beat has an active chord
+      const hasBeatChord = Boolean(
+        (measure.beatChords && measure.beatChords[b]?.trim()) ||
+        (measure.chordSymbols && measure.chordSymbols.some((c) => Math.floor(c.beatOffset) === b))
+      );
+
       for (let s = 0; s < effVal; s++) {
         const pitch = pitches[s] ?? null;
         if (pitch && pitch.step) {
@@ -393,11 +463,13 @@ class AudioEngine {
             this.scheduledEvents.push(handle);
           }
 
-          // Subtle left-hand accompaniment an octave lower
-          const lhMidi = Math.max(21, midi - 12);
-          const lhHandle = this.playTone(midiToFrequency(lhMidi), noteDurationSec, 0.35, timeOffsetSec);
-          if (lhHandle) {
-            this.scheduledEvents.push(lhHandle);
+          // Subtle left-hand accompaniment an octave lower ONLY if no explicit chord is attached to beat
+          if (!hasBeatChord) {
+            const lhMidi = Math.max(21, midi - 12);
+            const lhHandle = this.playTone(midiToFrequency(lhMidi), noteDurationSec, 0.35, timeOffsetSec);
+            if (lhHandle) {
+              this.scheduledEvents.push(lhHandle);
+            }
           }
         }
         // If pitch is null or empty: complete silence on this subdivision slot!

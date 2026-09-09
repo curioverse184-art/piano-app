@@ -4,6 +4,7 @@ import {
   Measure,
   NoteEvent,
   Pitch,
+  NoteStep,
   ToolMode,
   NoteDuration,
   AccidentalType,
@@ -565,8 +566,11 @@ export default function App() {
       curSubBeat = 0;
     }
 
-    // Set pitch at subBeatIndex
+    // Set pitch at subBeatIndex, preserving empty subdivisions (null)
     const curBeatNotes = [...(currentMeasure.beatNotes?.[curBeat] || [])];
+    while (curBeatNotes.length < effectiveVal) {
+      curBeatNotes.push(null as any);
+    }
     curBeatNotes[curSubBeat] = pitch;
 
     const updatedMeasure: Measure = {
@@ -638,7 +642,103 @@ export default function App() {
     audioEngine.playPitch(pitch, score.metadata.initialKeySignature, 0.65);
   }, [selection, score, activeHand, pushScoreState]);
 
-  // Clear notes in active beat, leaving '—' dash
+  // Advance subdivision without entering a note (creates intentional empty slot '.')
+  const handleAdvanceSubdivisionWithoutNote = useCallback(() => {
+    const currentMeasureId = selection.measureId || score.measures[0]?.id;
+    const measureIdx = Math.max(0, score.measures.findIndex((m) => m.id === currentMeasureId));
+    const currentMeasure = score.measures[measureIdx] || score.measures[0];
+    if (!currentMeasure) return;
+
+    const pickup = score.metadata.pickupBeat || 1;
+    let curBeat =
+      selection.beatIndex !== undefined
+        ? selection.beatIndex
+        : currentMeasure.measureNumber === 1
+        ? pickup - 1
+        : 0;
+
+    if (isBeatLockedByPickup(currentMeasure.measureNumber, curBeat, pickup)) {
+      curBeat = pickup - 1;
+    }
+    let curSubBeat = selection.subBeatIndex || 0;
+    const effectiveVal = getEffectiveBeatValue(score, measureIdx, curBeat);
+    if (curSubBeat >= effectiveVal) {
+      curSubBeat = 0;
+    }
+
+    // Ensure slot at curSubBeat is explicitly null (empty subdivision '.')
+    const curBeatNotes = [...(currentMeasure.beatNotes?.[curBeat] || [])];
+    while (curBeatNotes.length < effectiveVal) {
+      curBeatNotes.push(null as any);
+    }
+    curBeatNotes[curSubBeat] = null as any;
+
+    const updatedMeasure: Measure = {
+      ...currentMeasure,
+      beatNotes: {
+        ...(currentMeasure.beatNotes || {}),
+        [curBeat]: curBeatNotes,
+      },
+    };
+
+    const syncedMeasure = syncMeasureEventsFromBeatData(
+      updatedMeasure,
+      score.metadata.initialTimeSignature,
+      score.metadata.handTemplate || 'Both'
+    );
+
+    const nextPos = calculateNextCursorPosition(
+      score,
+      currentMeasureId,
+      curBeat,
+      curSubBeat,
+      effectiveVal
+    );
+
+    let newMeasures = score.measures.map((m) => (m.id === currentMeasureId ? syncedMeasure : m));
+    let nextMeasureId = nextPos.nextMeasureId;
+    let nextBeatIdx = nextPos.nextBeatIndex;
+    let nextSubBeatIdx = nextPos.nextSubBeatIndex;
+
+    if (nextPos.shouldAppendMeasure) {
+      const newM: Measure = {
+        id: `m_${Date.now()}`,
+        measureNumber: newMeasures.length + 1,
+        barlineType: 'single',
+        chordSymbols: [],
+        rhEvents: [],
+        lhEvents: [],
+        beatNotes: {},
+        beatValues: {},
+        beatLyrics: {},
+      };
+      const syncedNewM = syncMeasureEventsFromBeatData(
+        newM,
+        score.metadata.initialTimeSignature,
+        score.metadata.handTemplate || 'Both'
+      );
+      newMeasures.push(syncedNewM);
+      nextMeasureId = newM.id;
+      nextBeatIdx = 0;
+      nextSubBeatIdx = 0;
+    }
+
+    const updatedScore: Score = {
+      ...score,
+      measures: newMeasures,
+    };
+
+    pushScoreState(updatedScore);
+    setSelection({
+      measureId: nextMeasureId,
+      staff: activeHand === 'LH' ? 'LH' : 'RH',
+      eventId: null,
+      beatIndex: nextBeatIdx,
+      subBeatIndex: nextSubBeatIdx,
+    });
+  }, [selection, score, activeHand, pushScoreState]);
+
+  // Clear notes in active beat or subdivision, leaving '.' or '—'
   const handleClearCurrentBeat = useCallback(() => {
     const currentMeasureId = selection.measureId || score.measures[0]?.id;
     const measureIdx = Math.max(0, score.measures.findIndex((m) => m.id === currentMeasureId));
@@ -649,7 +749,43 @@ export default function App() {
     const pickup = score.metadata.pickupBeat || 1;
     if (isBeatLockedByPickup(currentMeasure.measureNumber, curBeat, pickup)) return;
 
+    const curSubBeat = selection.subBeatIndex || 0;
+    const effectiveVal = getEffectiveBeatValue(score, measureIdx, curBeat);
     const curBeatNotes = currentMeasure.beatNotes?.[curBeat] || [];
+
+    // If subdivision has a note in a multi-note beat, clear just that subdivision
+    if (effectiveVal > 1 && curBeatNotes.length > 0 && curBeatNotes[curSubBeat]) {
+      setScore((prev) => {
+        const targetM = prev.measures[measureIdx];
+        const nextNotes = { ...(targetM.beatNotes || {}) };
+        const updatedSlotNotes = [...(nextNotes[curBeat] || [])];
+        updatedSlotNotes[curSubBeat] = null as any;
+
+        const hasAnyNotes = updatedSlotNotes.some((p) => p && p.step);
+        if (!hasAnyNotes) {
+          delete nextNotes[curBeat];
+        } else {
+          nextNotes[curBeat] = updatedSlotNotes;
+        }
+
+        const updatedM: Measure = {
+          ...targetM,
+          beatNotes: nextNotes,
+        };
+        const syncedM = syncMeasureEventsFromBeatData(
+          updatedM,
+          prev.metadata.initialTimeSignature,
+          prev.metadata.handTemplate || 'Both'
+        );
+
+        const updatedMeasures = prev.measures.map((m, i) => (i === measureIdx ? syncedM : m));
+        const updated: Score = { ...prev, measures: updatedMeasures };
+        pushScoreState(updated);
+        return updated;
+      });
+      return;
+    }
+
     if (curBeatNotes.length > 0) {
       // Clear notes for this beat -> renders '—'
       setScore((prev) => {
@@ -673,20 +809,28 @@ export default function App() {
         return updated;
       });
     } else {
-      // Beat is already empty; step back to previous editable beat
-      if (curBeat > 0) {
+      // Beat is already empty; step back to previous editable subdivision / beat
+      if (curSubBeat > 0) {
+        setSelection((sel) => ({ ...sel, subBeatIndex: curSubBeat - 1 }));
+      } else if (curBeat > 0) {
         if (!isBeatLockedByPickup(currentMeasure.measureNumber, curBeat - 1, pickup)) {
-          setSelection((sel) => ({ ...sel, beatIndex: curBeat - 1, subBeatIndex: 0 }));
+          const prevBeatVal = getEffectiveBeatValue(score, measureIdx, curBeat - 1);
+          setSelection((sel) => ({
+            ...sel,
+            beatIndex: curBeat - 1,
+            subBeatIndex: Math.max(0, prevBeatVal - 1),
+          }));
         }
       } else if (measureIdx > 0) {
         const prevM = score.measures[measureIdx - 1];
         const prevTotal = getMeasureTotalBeats(prevM, score.metadata.initialTimeSignature);
+        const prevBeatVal = getEffectiveBeatValue(score, measureIdx - 1, prevTotal - 1);
         setSelection({
           measureId: prevM.id,
           staff: activeHand === 'LH' ? 'LH' : 'RH',
           eventId: null,
           beatIndex: prevTotal - 1,
-          subBeatIndex: 0,
+          subBeatIndex: Math.max(0, prevBeatVal - 1),
         });
       }
     }
@@ -926,7 +1070,10 @@ export default function App() {
         setToolMode('lyrics');
         return;
       }
-      if (e.key.toLowerCase() === 'c') {
+
+      // Shift + C -> Open Chord Symbol Dialog (Must require Shift so normal C enters pitch)
+      if (e.shiftKey && (e.key === 'C' || e.key === 'c' || e.code === 'KeyC')) {
+        e.preventDefault();
         setIsChordDialogOpen(true);
         return;
       }
@@ -938,9 +1085,15 @@ export default function App() {
       if (e.key === '4') { setSelectedDuration('eighth'); return; }
       if (e.key === '5') { setSelectedDuration('sixteenth'); return; }
       if (e.key === '6') { setSelectedDuration('thirty_second'); return; }
-      if (e.key === '.') { setIsDotted((prev) => !prev); return; }
 
-      // Delete / Backspace -> Clears beat to '—' or moves back
+      // Intentional empty subdivision (dot / period '.') in Pianotastic notation
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key === '.') {
+        e.preventDefault();
+        handleAdvanceSubdivisionWithoutNote();
+        return;
+      }
+
+      // Delete / Backspace -> Clears beat to '—' or subdivision to '.', or moves back
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         handleClearCurrentBeat();
@@ -954,7 +1107,7 @@ export default function App() {
         return;
       }
 
-      // Horizontal arrow navigation across beats
+      // Horizontal arrow navigation across beats and subdivisions
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         const currentMeasureId = selection.measureId || score.measures[0]?.id;
@@ -962,20 +1115,31 @@ export default function App() {
         const curMeasure = score.measures[measureIdx];
         if (!curMeasure) return;
         const curBeat = selection.beatIndex !== undefined ? selection.beatIndex : 0;
+        const curSub = selection.subBeatIndex || 0;
         const pickup = score.metadata.pickupBeat || 1;
-        if (curBeat > 0) {
+
+        if (curSub > 0) {
+          // Move to previous subdivision within this beat
+          setSelection((sel) => ({ ...sel, subBeatIndex: curSub - 1 }));
+        } else if (curBeat > 0) {
           if (!isBeatLockedByPickup(curMeasure.measureNumber, curBeat - 1, pickup)) {
-            setSelection((sel) => ({ ...sel, beatIndex: curBeat - 1, subBeatIndex: 0 }));
+            const prevBeatVal = getEffectiveBeatValue(score, measureIdx, curBeat - 1);
+            setSelection((sel) => ({
+              ...sel,
+              beatIndex: curBeat - 1,
+              subBeatIndex: Math.max(0, prevBeatVal - 1),
+            }));
           }
         } else if (measureIdx > 0) {
           const prevM = score.measures[measureIdx - 1];
           const prevTotal = getMeasureTotalBeats(prevM, score.metadata.initialTimeSignature);
+          const prevBeatVal = getEffectiveBeatValue(score, measureIdx - 1, prevTotal - 1);
           setSelection({
             measureId: prevM.id,
             staff: activeHand === 'LH' ? 'LH' : 'RH',
             eventId: null,
             beatIndex: prevTotal - 1,
-            subBeatIndex: 0,
+            subBeatIndex: Math.max(0, prevBeatVal - 1),
           });
         }
         return;
@@ -988,8 +1152,14 @@ export default function App() {
         const curMeasure = score.measures[measureIdx];
         if (!curMeasure) return;
         const curBeat = selection.beatIndex !== undefined ? selection.beatIndex : 0;
+        const curSub = selection.subBeatIndex || 0;
         const totalBeats = getMeasureTotalBeats(curMeasure, score.metadata.initialTimeSignature);
-        if (curBeat < totalBeats - 1) {
+        const effVal = getEffectiveBeatValue(score, measureIdx, curBeat);
+
+        if (curSub + 1 < effVal) {
+          // Move to next subdivision within this beat
+          setSelection((sel) => ({ ...sel, subBeatIndex: curSub + 1 }));
+        } else if (curBeat < totalBeats - 1) {
           setSelection((sel) => ({ ...sel, beatIndex: curBeat + 1, subBeatIndex: 0 }));
         } else if (measureIdx < score.measures.length - 1) {
           const nextM = score.measures[measureIdx + 1];
@@ -1018,10 +1188,17 @@ export default function App() {
 
       // Direct Computer Pitch Keys: C, D, E, F, G, A, B
       const upper = e.key.toUpperCase();
-      if (['C', 'D', 'E', 'F', 'G', 'A', 'B'].includes(upper)) {
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        ['C', 'D', 'E', 'F', 'G', 'A', 'B'].includes(upper)
+      ) {
+        e.preventDefault();
         const octave = activeHand === 'LH' ? 3 : 4;
         const pitch: Pitch = {
-          step: upper as any,
+          step: upper as NoteStep,
           octave,
           accidental: selectedAccidental,
         };
@@ -1035,6 +1212,7 @@ export default function App() {
     handleUndo,
     handleRedo,
     handleClearCurrentBeat,
+    handleAdvanceSubdivisionWithoutNote,
     handleToggleLineBreak,
     handleTransposeSelected,
     handlePianotasticNoteInput,
@@ -1290,6 +1468,9 @@ export default function App() {
           if (!selection.measureId) return;
           const currentBeat = selection.beatIndex !== undefined ? selection.beatIndex : 0;
           handleUpdateBeatChord(selection.measureId, currentBeat, chord.formatted);
+          if (chord.formatted) {
+            audioEngine.playChord(chord.formatted);
+          }
         }}
       />
 
